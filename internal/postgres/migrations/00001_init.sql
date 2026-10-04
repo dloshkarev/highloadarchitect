@@ -4,7 +4,6 @@ CREATE TABLE users (
     first_name TEXT NOT NULL,
     second_name TEXT NOT NULL,
     birthdate DATE NOT NULL,
-    gender TEXT NOT NULL DEFAULT '',
     biography TEXT NOT NULL DEFAULT '',
     city TEXT NOT NULL DEFAULT '',
     password_hash TEXT NOT NULL

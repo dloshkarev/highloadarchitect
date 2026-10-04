@@ -18,7 +18,6 @@ type registerRequest struct {
 	FirstName  string `json:"first_name"`
 	SecondName string `json:"second_name"`
 	Birthdate  string `json:"birthdate"`
-	Gender     string `json:"gender"`
 	Biography  string `json:"biography"`
 	City       string `json:"city"`
 	Password   string `json:"password"`
@@ -33,7 +32,6 @@ type userResponse struct {
 	FirstName  string `json:"first_name"`
 	SecondName string `json:"second_name"`
 	Birthdate  string `json:"birthdate"`
-	Gender     string `json:"gender"`
 	Biography  string `json:"biography"`
 	City       string `json:"city"`
 }
@@ -50,7 +48,6 @@ func (h *userHandler) register(ctx *gin.Context) {
 		FirstName:  req.FirstName,
 		SecondName: req.SecondName,
 		Birthdate:  req.Birthdate,
-		Gender:     req.Gender,
 		Biography:  req.Biography,
 		City:       req.City,
 		Password:   req.Password,
@@ -79,7 +76,6 @@ func newUserResponse(user domain.User) userResponse {
 		FirstName:  user.FirstName,
 		SecondName: user.SecondName,
 		Birthdate:  user.Birthdate.Format(time.DateOnly),
-		Gender:     user.Gender,
 		Biography:  user.Biography,
 		City:       user.City,
 	}

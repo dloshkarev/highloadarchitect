@@ -23,22 +23,23 @@ var (
 	errEmptyUser              = errors.New("user is empty")
 	errEmptyPassword          = errors.New("password is empty")
 	errEmptyDatabase          = errors.New("database is empty")
-	errEmptySSLMode           = errors.New("sslmode is empty")
 	errInvalidMaxConns        = errors.New("max conns must be positive")
 	errInvalidMaxConnLifetime = errors.New("max conn lifetime must be positive")
 	errInvalidMaxConnIdleTime = errors.New("max conn idle time must be positive")
+	errInvalidMaxBodyBytes    = errors.New("max body bytes must be positive")
 )
 
 type Config struct {
 	HTTPServer      HTTPServerConfig `yaml:"http-server"`
 	Postgres        PostgresConfig   `yaml:"postgres"`
-	ShutdownTimeout time.Duration    `yaml:"shutdown_timeout" env-required:"true"`
+	ShutdownTimeout time.Duration    `yaml:"shutdown_timeout" env:"SHUTDOWN_TIMEOUT" env-required:"true"`
 }
 
 type HTTPServerConfig struct {
-	Port        string        `yaml:"port" env:"HTTP_SERVER_PORT" env-required:"true"`
-	Timeout     time.Duration `yaml:"read_write_timeout" env-required:"true"`
-	IdleTimeout time.Duration `yaml:"idle_timeout" env-required:"true"`
+	Port         string        `yaml:"port" env:"HTTP_SERVER_PORT" env-required:"true"`
+	Timeout      time.Duration `yaml:"read_write_timeout" env:"HTTP_READ_WRITE_TIMEOUT" env-required:"true"`
+	IdleTimeout  time.Duration `yaml:"idle_timeout" env:"HTTP_IDLE_TIMEOUT" env-required:"true"`
+	MaxBodyBytes int64         `yaml:"max_body_bytes" env:"HTTP_MAX_BODY_BYTES" env-required:"true"`
 }
 
 type PostgresConfig struct {
@@ -47,7 +48,6 @@ type PostgresConfig struct {
 	User            string        `yaml:"user" env:"POSTGRES_USER" env-required:"true"`
 	Password        string        `yaml:"password" env:"POSTGRES_PASSWORD" env-required:"true"`
 	Database        string        `yaml:"database" env:"POSTGRES_DB" env-required:"true"`
-	SSLMode         string        `yaml:"sslmode" env:"POSTGRES_SSLMODE" env-required:"true"`
 	MaxConns        int32         `yaml:"max_conns" env:"POSTGRES_MAX_CONNS" env-required:"true"`
 	MaxConnLifetime time.Duration `yaml:"max_conn_lifetime" env:"POSTGRES_MAX_CONN_LIFETIME" env-required:"true"`
 	MaxConnIdleTime time.Duration `yaml:"max_conn_idle_time" env:"POSTGRES_MAX_CONN_IDLE_TIME" env-required:"true"`
@@ -116,6 +116,9 @@ func (c HTTPServerConfig) Validate() error {
 	if c.IdleTimeout <= 0 {
 		return errInvalidIdleTimeout
 	}
+	if c.MaxBodyBytes <= 0 {
+		return errInvalidMaxBodyBytes
+	}
 
 	return nil
 }
@@ -136,7 +139,7 @@ func (c PostgresConfig) DSN() string {
 		Path:   "/" + c.Database,
 	}
 	query := postgresURL.Query()
-	query.Set("sslmode", c.SSLMode)
+	query.Set("sslmode", "disable")
 	query.Set("application_name", "highloadarchitect")
 	postgresURL.RawQuery = query.Encode()
 
@@ -155,8 +158,6 @@ func (c PostgresConfig) validateConnection() error {
 		return errEmptyPassword
 	case c.Database == "":
 		return errEmptyDatabase
-	case c.SSLMode == "":
-		return errEmptySSLMode
 	default:
 		return nil
 	}

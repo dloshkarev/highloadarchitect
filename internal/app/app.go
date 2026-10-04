@@ -35,7 +35,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 	addr := ":" + cfg.HTTPServer.Port
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           router,
+		Handler:           http.MaxBytesHandler(router, cfg.HTTPServer.MaxBodyBytes),
 		ReadHeaderTimeout: cfg.HTTPServer.Timeout,
 		ReadTimeout:       cfg.HTTPServer.Timeout,
 		WriteTimeout:      cfg.HTTPServer.Timeout,

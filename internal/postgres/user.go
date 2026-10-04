@@ -19,11 +19,11 @@ func NewUserRepository(pool *pgxpool.Pool) *UserRepository {
 	return &UserRepository{pool: pool}
 }
 
-func (r *UserRepository) Create(ctx context.Context, user domain.User) error {
+func (r *UserRepository) Create(ctx context.Context, user domain.User, passwordHash string) error {
 	const query = `
 		INSERT INTO users (
-			id, first_name, second_name, birthdate, gender, biography, city, password_hash
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			id, first_name, second_name, birthdate, biography, city, password_hash
+		) VALUES ($1, $2, $3, $4, $5, $6, $7)
 	`
 	_, err := r.pool.Exec(
 		ctx,
@@ -32,13 +32,12 @@ func (r *UserRepository) Create(ctx context.Context, user domain.User) error {
 		user.FirstName,
 		user.SecondName,
 		user.Birthdate,
-		user.Gender,
 		user.Biography,
 		user.City,
-		user.PasswordHash,
+		passwordHash,
 	)
 	if err != nil {
-		return fmt.Errorf("create user: %w", err)
+		return dbErr("insert user", err)
 	}
 
 	return nil
@@ -46,7 +45,7 @@ func (r *UserRepository) Create(ctx context.Context, user domain.User) error {
 
 func (r *UserRepository) GetByID(ctx context.Context, userID string) (domain.User, error) {
 	const query = `
-		SELECT id, first_name, second_name, birthdate, gender, biography, city, password_hash
+		SELECT id, first_name, second_name, birthdate, biography, city
 		FROM users
 		WHERE id = $1
 	`
@@ -56,17 +55,37 @@ func (r *UserRepository) GetByID(ctx context.Context, userID string) (domain.Use
 		&user.FirstName,
 		&user.SecondName,
 		&user.Birthdate,
-		&user.Gender,
 		&user.Biography,
 		&user.City,
-		&user.PasswordHash,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.User{}, domain.ErrNotFound
 	}
 	if err != nil {
-		return domain.User{}, fmt.Errorf("get user: %w", err)
+		return domain.User{}, dbErr("select user", err)
 	}
 
 	return user, nil
+}
+
+func (r *UserRepository) GetCredentials(ctx context.Context, userID string) (domain.Credentials, error) {
+	const query = `
+		SELECT id, password_hash
+		FROM users
+		WHERE id = $1
+	`
+	var credentials domain.Credentials
+	err := r.pool.QueryRow(ctx, query, userID).Scan(&credentials.UserID, &credentials.PasswordHash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Credentials{}, domain.ErrNotFound
+	}
+	if err != nil {
+		return domain.Credentials{}, dbErr("select credentials", err)
+	}
+
+	return credentials, nil
+}
+
+func dbErr(operation string, err error) error {
+	return fmt.Errorf("%s: %w", operation, &domain.DBError{Err: err})
 }

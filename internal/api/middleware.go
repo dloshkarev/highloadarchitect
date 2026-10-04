@@ -20,7 +20,7 @@ func recovery() gin.HandlerFunc {
 			ctx.AbortWithStatusJSON(http.StatusInternalServerError, serverError{
 				Message:   "Внутренняя ошибка сервера",
 				RequestID: requestID,
-				Code:      internalErrorCode,
+				Code:      errorCodePanic,
 			})
 		}()
 		ctx.Next()

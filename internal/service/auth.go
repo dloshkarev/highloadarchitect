@@ -29,11 +29,11 @@ func (s *AuthService) Login(ctx context.Context, userID, password string) (strin
 		return "", domain.ErrInvalidInput
 	}
 
-	user, err := s.users.GetByID(ctx, userID)
+	credentials, err := s.users.GetCredentials(ctx, userID)
 	if err != nil {
-		return "", fmt.Errorf("get user: %w", err)
+		return "", fmt.Errorf("load credentials: %w", err)
 	}
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+	if err := bcrypt.CompareHashAndPassword([]byte(credentials.PasswordHash), []byte(password)); err != nil {
 		if errors.Is(err, bcrypt.ErrMismatchedHashAndPassword) {
 			return "", domain.ErrInvalidInput
 		}
@@ -42,8 +42,8 @@ func (s *AuthService) Login(ctx context.Context, userID, password string) (strin
 	}
 
 	token := uuid.NewString()
-	if err := s.sessions.Create(ctx, token, user.ID); err != nil {
-		return "", fmt.Errorf("create session: %w", err)
+	if err := s.sessions.Create(ctx, token, credentials.UserID); err != nil {
+		return "", fmt.Errorf("save session: %w", err)
 	}
 
 	return token, nil

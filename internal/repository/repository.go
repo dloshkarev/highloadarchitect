@@ -7,8 +7,9 @@ import (
 )
 
 type UserRepository interface {
-	Create(ctx context.Context, user domain.User) error
+	Create(ctx context.Context, user domain.User, passwordHash string) error
 	GetByID(ctx context.Context, id string) (domain.User, error)
+	GetCredentials(ctx context.Context, userID string) (domain.Credentials, error)
 }
 
 type SessionRepository interface {

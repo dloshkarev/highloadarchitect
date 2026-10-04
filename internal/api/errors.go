@@ -11,7 +11,11 @@ import (
 	"github.com/dloshkarev/highloadarchitect/internal/domain"
 )
 
-const internalErrorCode = 500
+const (
+	errorCodeInternal = 1000
+	errorCodeDatabase = 1001
+	errorCodePanic    = 1002
+)
 
 type serverError struct {
 	Message   string `json:"message"`
@@ -28,10 +32,14 @@ func writeError(ctx *gin.Context, err error) {
 	default:
 		requestID := uuid.NewString()
 		slog.Error("request failed", "err", err, "request_id", requestID, "path", ctx.FullPath())
+		code := errorCodeInternal
+		if _, ok := errors.AsType[*domain.DBError](err); ok {
+			code = errorCodeDatabase
+		}
 		ctx.AbortWithStatusJSON(http.StatusInternalServerError, serverError{
 			Message:   "Внутренняя ошибка сервера",
 			RequestID: requestID,
-			Code:      internalErrorCode,
+			Code:      code,
 		})
 	}
 }
