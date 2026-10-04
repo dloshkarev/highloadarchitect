@@ -1,10 +1,9 @@
 package api
 
 import (
-	"net/http"
-
 	"github.com/gin-gonic/gin"
 
+	"github.com/dloshkarev/highloadarchitect/internal/domain"
 	"github.com/dloshkarev/highloadarchitect/internal/service"
 )
 
@@ -18,7 +17,7 @@ func NewRouter(users *service.UserService, auth *service.AuthService) *gin.Engin
 	router.POST("/user/register", userHandler.register)
 	router.GET("/user/get/:id", userHandler.get)
 	router.NoRoute(func(ctx *gin.Context) {
-		ctx.AbortWithStatus(http.StatusNotFound)
+		writeError(ctx, domain.ErrRouteNotFound)
 	})
 
 	return router

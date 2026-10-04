@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -18,7 +19,7 @@ func recovery() gin.HandlerFunc {
 			requestID := uuid.NewString()
 			slog.Error("panic", "err", rec, "request_id", requestID, "path", ctx.FullPath())
 			ctx.AbortWithStatusJSON(http.StatusInternalServerError, serverError{
-				Message:   "Внутренняя ошибка сервера",
+				Message:   fmt.Sprintf("внутренняя ошибка сервера: %v", rec),
 				RequestID: requestID,
 				Code:      errorCodePanic,
 			})

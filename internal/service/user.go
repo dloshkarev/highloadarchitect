@@ -15,11 +15,12 @@ import (
 )
 
 const (
-	maxNameLength      = 100
-	maxCityLength      = 100
-	maxBiographyLength = 2000
-	minPasswordLength  = 8
-	maxPasswordLength  = 72
+	maxNameLength          = 100
+	maxCityLength          = 100
+	maxBiographyLength     = 2000
+	minPasswordLength      = 8
+	maxPasswordLength      = 72
+	bcryptMaxPasswordBytes = 72
 )
 
 type RegisterInput struct {
@@ -53,7 +54,7 @@ func (s *UserService) Register(ctx context.Context, input RegisterInput) (string
 
 func (s *UserService) Get(ctx context.Context, userID string) (domain.User, error) {
 	if _, err := uuid.Parse(userID); err != nil {
-		return domain.User{}, domain.ErrInvalidInput
+		return domain.User{}, domain.NewValidationError("идентификатор пользователя должен быть UUID")
 	}
 
 	user, err := s.users.GetByID(ctx, userID)
@@ -75,7 +76,7 @@ func newUser(input RegisterInput) (domain.User, string, error) {
 
 	birthdate, err := time.Parse(time.DateOnly, strings.TrimSpace(input.Birthdate))
 	if err != nil {
-		return domain.User{}, "", domain.ErrInvalidInput
+		return domain.User{}, "", domain.NewValidationError("дата рождения должна быть в формате ГГГГ-ММ-ДД")
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
@@ -94,23 +95,36 @@ func newUser(input RegisterInput) (domain.User, string, error) {
 }
 
 func validateRegisterInput(input RegisterInput) error {
-	if input.FirstName == "" || input.SecondName == "" {
-		return domain.ErrInvalidInput
+	if input.FirstName == "" {
+		return domain.NewValidationError("имя не заполнено")
 	}
-	firstNameLen := utf8.RuneCountInString(input.FirstName)
-	secondNameLen := utf8.RuneCountInString(input.SecondName)
-	if firstNameLen > maxNameLength || secondNameLen > maxNameLength {
-		return domain.ErrInvalidInput
+	if input.SecondName == "" {
+		return domain.NewValidationError("фамилия не заполнена")
 	}
-	cityLen := utf8.RuneCountInString(input.City)
-	biographyLen := utf8.RuneCountInString(input.Biography)
-	if cityLen > maxCityLength || biographyLen > maxBiographyLength {
-		return domain.ErrInvalidInput
+	if utf8.RuneCountInString(input.FirstName) > maxNameLength {
+		return domain.NewValidationError(fmt.Sprintf("имя длиннее %d символов", maxNameLength))
 	}
-	passwordTooShort := len(input.Password) < minPasswordLength
-	passwordTooLong := len(input.Password) > maxPasswordLength
-	if passwordTooShort || passwordTooLong || strings.ContainsRune(input.Password, 0) {
-		return domain.ErrInvalidInput
+	if utf8.RuneCountInString(input.SecondName) > maxNameLength {
+		return domain.NewValidationError(fmt.Sprintf("фамилия длиннее %d символов", maxNameLength))
+	}
+	if utf8.RuneCountInString(input.City) > maxCityLength {
+		return domain.NewValidationError(fmt.Sprintf("город длиннее %d символов", maxCityLength))
+	}
+	if utf8.RuneCountInString(input.Biography) > maxBiographyLength {
+		return domain.NewValidationError(fmt.Sprintf("биография длиннее %d символов", maxBiographyLength))
+	}
+	passwordLength := utf8.RuneCountInString(input.Password)
+	if passwordLength < minPasswordLength {
+		return domain.NewValidationError(fmt.Sprintf("пароль короче %d символов", minPasswordLength))
+	}
+	if passwordLength > maxPasswordLength {
+		return domain.NewValidationError(fmt.Sprintf("пароль длиннее %d символов", maxPasswordLength))
+	}
+	if len(input.Password) > bcryptMaxPasswordBytes {
+		return domain.NewValidationError("пароль слишком длинный для сохранения")
+	}
+	if strings.ContainsRune(input.Password, 0) {
+		return domain.NewValidationError("пароль содержит нулевой символ")
 	}
 
 	return nil

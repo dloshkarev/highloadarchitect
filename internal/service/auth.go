@@ -23,10 +23,10 @@ func NewAuthService(users repository.UserRepository, sessions repository.Session
 
 func (s *AuthService) Login(ctx context.Context, userID, password string) (string, error) {
 	if password == "" {
-		return "", domain.ErrInvalidInput
+		return "", domain.NewValidationError("пароль не заполнен")
 	}
 	if _, err := uuid.Parse(userID); err != nil {
-		return "", domain.ErrInvalidInput
+		return "", domain.NewValidationError("идентификатор пользователя должен быть UUID")
 	}
 
 	credentials, err := s.users.GetCredentials(ctx, userID)
@@ -35,7 +35,7 @@ func (s *AuthService) Login(ctx context.Context, userID, password string) (strin
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(credentials.PasswordHash), []byte(password)); err != nil {
 		if errors.Is(err, bcrypt.ErrMismatchedHashAndPassword) {
-			return "", domain.ErrInvalidInput
+			return "", domain.NewValidationError("неверный пароль")
 		}
 
 		return "", fmt.Errorf("compare password: %w", err)

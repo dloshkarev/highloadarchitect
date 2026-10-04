@@ -23,9 +23,7 @@ type loginResponse struct {
 
 func (h *authHandler) login(ctx *gin.Context) {
 	var req loginRequest
-	if err := ctx.ShouldBindJSON(&req); err != nil {
-		ctx.AbortWithStatus(http.StatusBadRequest)
-
+	if !bindJSON(ctx, &req) {
 		return
 	}
 

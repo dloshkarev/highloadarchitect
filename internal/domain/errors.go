@@ -3,9 +3,21 @@ package domain
 import "errors"
 
 var (
-	ErrNotFound     = errors.New("not found")
-	ErrInvalidInput = errors.New("invalid input")
+	ErrNotFound      = errors.New("пользователь не найден")
+	ErrRouteNotFound = errors.New("маршрут не найден")
 )
+
+type ValidationError struct {
+	message string
+}
+
+func NewValidationError(message string) error {
+	return &ValidationError{message: message}
+}
+
+func (e *ValidationError) Error() string {
+	return e.message
+}
 
 type DBError struct {
 	Err error

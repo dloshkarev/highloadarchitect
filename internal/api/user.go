@@ -38,9 +38,7 @@ type userResponse struct {
 
 func (h *userHandler) register(ctx *gin.Context) {
 	var req registerRequest
-	if err := ctx.ShouldBindJSON(&req); err != nil {
-		ctx.AbortWithStatus(http.StatusBadRequest)
-
+	if !bindJSON(ctx, &req) {
 		return
 	}
 

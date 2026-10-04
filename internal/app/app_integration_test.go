@@ -121,7 +121,7 @@ func TestRegisterAndGetUser(t *testing.T) {
 }
 
 // Проверяет регистрацию с коротким паролем и с невалидным JSON.
-// Ожидает 400 и пустое тело ответа в обоих случаях.
+// Ожидает 400 и текст ошибки: пароль короче 8 символов, затем некорректное тело запроса.
 func TestRegisterRejectsInvalidInput(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -131,15 +131,15 @@ func TestRegisterRejectsInvalidInput(t *testing.T) {
 	profile.Password = "short"
 	status, body := doJSON(t, http.MethodPost, "/user/register", profile)
 	require.Equal(t, http.StatusBadRequest, status)
-	require.Empty(t, body)
+	require.Contains(t, errorMessage(t, body), "пароль короче 8 символов")
 
 	status, body = doJSON(t, http.MethodPost, "/user/register", []byte("{"))
 	require.Equal(t, http.StatusBadRequest, status)
-	require.Empty(t, body)
+	require.Contains(t, errorMessage(t, body), "некорректное тело запроса")
 }
 
 // Проверяет чтение анкеты по неизвестному и по невалидному идентификатору.
-// Ожидает 404 для отсутствующего пользователя и 400 для идентификатора не в формате UUID, оба ответа без тела.
+// Ожидает 404 «пользователь не найден» и 400 «идентификатор пользователя должен быть UUID».
 func TestGetUserNotFoundAndInvalidID(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -147,15 +147,15 @@ func TestGetUserNotFoundAndInvalidID(t *testing.T) {
 
 	status, body := doJSON(t, http.MethodGet, "/user/get/"+uuid.NewString(), nil)
 	require.Equal(t, http.StatusNotFound, status)
-	require.Empty(t, body)
+	require.Equal(t, "пользователь не найден", errorMessage(t, body))
 
 	status, body = doJSON(t, http.MethodGet, "/user/get/not-a-uuid", nil)
 	require.Equal(t, http.StatusBadRequest, status)
-	require.Empty(t, body)
+	require.Equal(t, "идентификатор пользователя должен быть UUID", errorMessage(t, body))
 }
 
 // Проверяет вход с верным паролем, с неверным паролем, с неизвестным пользователем и с невалидным идентификатором.
-// Ожидает 200 и токен, 400, 404 и 400 соответственно. Ошибочные ответы без тела.
+// Ожидает 200 и токен, 400 «неверный пароль», 404 «пользователь не найден» и 400 «идентификатор пользователя должен быть UUID».
 func TestLogin(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -180,21 +180,21 @@ func TestLogin(t *testing.T) {
 		"password": "wrong-password",
 	})
 	require.Equal(t, http.StatusBadRequest, status)
-	require.Empty(t, body)
+	require.Equal(t, "неверный пароль", errorMessage(t, body))
 
 	status, body = doJSON(t, http.MethodPost, "/login", map[string]string{
 		"id":       uuid.NewString(),
 		"password": sampleProfile().Password,
 	})
 	require.Equal(t, http.StatusNotFound, status)
-	require.Empty(t, body)
+	require.Equal(t, "пользователь не найден", errorMessage(t, body))
 
 	status, body = doJSON(t, http.MethodPost, "/login", map[string]string{
 		"id":       "not-a-uuid",
 		"password": sampleProfile().Password,
 	})
 	require.Equal(t, http.StatusBadRequest, status)
-	require.Empty(t, body)
+	require.Equal(t, "идентификатор пользователя должен быть UUID", errorMessage(t, body))
 }
 
 // Проверяет повторный вход того же пользователя.
@@ -215,7 +215,7 @@ func TestLoginReplacesPreviousToken(t *testing.T) {
 }
 
 // Проверяет запрос к незарегистрированному маршруту.
-// Ожидает 404 и пустое тело ответа.
+// Ожидает 404 и текст «маршрут не найден».
 func TestUnknownRoute(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -223,7 +223,7 @@ func TestUnknownRoute(t *testing.T) {
 
 	status, body := doJSON(t, http.MethodGet, "/unknown", nil)
 	require.Equal(t, http.StatusNotFound, status)
-	require.Empty(t, body)
+	require.Equal(t, "маршрут не найден", errorMessage(t, body))
 }
 
 func startPostgres(ctx context.Context) (*postgres.PostgresContainer, error) {
@@ -413,6 +413,17 @@ func sessionTokens(t *testing.T, userID string) []string {
 	require.NoError(t, rows.Err())
 
 	return tokens
+}
+
+func errorMessage(t *testing.T, body []byte) string {
+	t.Helper()
+
+	var payload struct {
+		Message string `json:"message"`
+	}
+	require.NoError(t, json.Unmarshal(body, &payload))
+
+	return payload.Message
 }
 
 func doJSON(t *testing.T, method, path string, body any) (int, []byte) {
