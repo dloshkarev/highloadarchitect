@@ -1,0 +1,144 @@
+{
+  "info": {
+    "name": "Highload Architect",
+    "description": "Запросы к приложению, запущенному в локальном Docker (`make docker-run`). Сначала выполните «Регистрация», затем «Вход», затем «Анкета»: идентификатор и токен сохраняются в переменные коллекции.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "password",
+      "value": "Секретная строка"
+    },
+    {
+      "key": "userId",
+      "value": ""
+    },
+    {
+      "key": "token",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Регистрация",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"first_name\": \"Имя\",\n  \"second_name\": \"Фамилия\",\n  \"birthdate\": \"1990-01-02\",\n  \"biography\": \"Хобби, интересы и т.п.\",\n  \"city\": \"Москва\",\n  \"password\": \"{{password}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{baseUrl}}/user/register",
+        "description": "Регистрирует пользователя. В ответ приходит user_id, он записывается в переменную коллекции userId."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('статус 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "const body = pm.response.json();",
+              "pm.test('user_id', function () {",
+              "    pm.expect(body.user_id).to.be.a('string').and.not.empty;",
+              "});",
+              "pm.collectionVariables.set('userId', body.user_id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Вход",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"id\": \"{{userId}}\",\n  \"password\": \"{{password}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{baseUrl}}/login",
+        "description": "Возвращает токен для userId из предыдущего запроса и сохраняет его в переменную коллекции token."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('статус 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "const body = pm.response.json();",
+              "pm.test('token', function () {",
+              "    pm.expect(body.token).to.be.a('string').and.not.empty;",
+              "});",
+              "pm.collectionVariables.set('token', body.token);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Анкета",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/user/get/{{userId}}",
+        "description": "Читает анкету пользователя userId. Пароль в ответ не входит."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('статус 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "const body = pm.response.json();",
+              "pm.test('анкета', function () {",
+              "    pm.expect(body.id).to.eql(pm.collectionVariables.get('userId'));",
+              "    pm.expect(body.first_name).to.eql('Имя');",
+              "    pm.expect(body.second_name).to.eql('Фамилия');",
+              "    pm.expect(body.birthdate).to.eql('1990-01-02');",
+              "    pm.expect(body.biography).to.eql('Хобби, интересы и т.п.');",
+              "    pm.expect(body.city).to.eql('Москва');",
+              "    pm.expect(body).to.not.have.property('password');",
+              "});"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
