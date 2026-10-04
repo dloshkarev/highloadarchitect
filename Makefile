@@ -2,6 +2,14 @@
 test-integration:
 	@go test -tags=integration -count=1 -timeout=10m -v ./...
 
+## docker-run: Запустить приложение и PostgreSQL в Docker
+docker-run:
+	docker compose -f deployments/docker-compose.yaml up -d --build
+
+## docker-stop: Остановить приложение и PostgreSQL
+docker-stop:
+	docker compose -f deployments/docker-compose.yaml down
+
 ## run-linters: Запустить линтеры
 run-linters:
 	@golangci-lint run -c ./golangci.yml

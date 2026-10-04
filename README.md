@@ -10,3 +10,22 @@
 ```bash
 make test-integration
 ```
+
+## Запуск в Docker
+
+Нужен Docker. Команда собирает приложение и поднимает его вместе с PostgreSQL.
+
+```bash
+make docker-run
+```
+
+С хоста доступны:
+
+- приложение — http://localhost:8080
+- PostgreSQL — `localhost:5432`, пользователь `social`, пароль `social`, база `social`
+
+Остановка:
+
+```bash
+make docker-stop
+```
