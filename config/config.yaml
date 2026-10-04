@@ -1,0 +1,17 @@
+shutdown_timeout: "10s"
+
+http-server:
+  port: "8080"
+  read_write_timeout: "10s"
+  idle_timeout: "1m"
+
+postgres:
+  host: "localhost"
+  port: "5432"
+  user: "social"
+  password: "social"
+  database: "social"
+  sslmode: "disable"
+  max_conns: 10
+  max_conn_lifetime: "30m"
+  max_conn_idle_time: "5m"

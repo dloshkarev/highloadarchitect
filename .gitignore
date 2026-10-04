@@ -1,0 +1,55 @@
+### Intellij ###
+*.iml
+/smsc
+/sakura
+/a2p
+
+*.pb.go
+
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Go workspace file
+go.work
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# MacOS
+.DS_Store
+
+# Coverage files
+coverage.out
+coverage.html
+
+# Build artifacts
+bin/
+dist/
+
+# Generated mocks
+*_mock.go
+*_mocks.go
+
+# Log files
+*.log
+
+# Environment files
+.env
+.env.local
