@@ -11,7 +11,7 @@ func NewRouter(users *service.UserService, auth *service.AuthService) *gin.Engin
 	authHandler := &authHandler{auth: auth}
 
 	router := gin.New()
-	router.Use(requestID(), gin.Logger(), recovery())
+	router.Use(gin.Logger(), recovery())
 	router.POST("/login", authHandler.login)
 	router.POST("/user/register", userHandler.register)
 	router.GET("/user/get/:id", userHandler.get)

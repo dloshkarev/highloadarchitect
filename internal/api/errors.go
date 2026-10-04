@@ -26,10 +26,7 @@ func writeError(ctx *gin.Context, err error) {
 	case errors.Is(err, domain.ErrNotFound):
 		ctx.AbortWithStatus(http.StatusNotFound)
 	default:
-		requestID := requestIDFrom(ctx.Request.Context())
-		if requestID == "" {
-			requestID = uuid.NewString()
-		}
+		requestID := uuid.NewString()
 		slog.Error("request failed", "err", err, "request_id", requestID, "path", ctx.FullPath())
 		ctx.AbortWithStatusJSON(http.StatusInternalServerError, serverError{
 			Message:   "Внутренняя ошибка сервера",
