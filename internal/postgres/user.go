@@ -86,6 +86,45 @@ func (r *UserRepository) GetCredentials(ctx context.Context, userID string) (dom
 	return credentials, nil
 }
 
+func (r *UserRepository) Search(
+	ctx context.Context,
+	firstNamePart string,
+	secondNamePart string,
+) ([]domain.User, error) {
+	const query = `
+		SELECT id, first_name, second_name, birthdate, biography, city
+		FROM users
+		WHERE id = firstName LIKE $1 and secondName LIKE $2
+		ORDER BY id
+	`
+	firstNameLike := fmt.Sprintf("%%%s", firstNamePart)
+	secondNameLike := fmt.Sprintf("%%%s", secondNamePart)
+	rows, err := r.pool.Query(ctx, query, firstNameLike, secondNameLike)
+	if err != nil {
+		return nil, dbErr("cannot do users search", err)
+	}
+	defer rows.Close()
+
+	result := make([]domain.User, 0)
+	for rows.Next() {
+		var user domain.User
+		if err := rows.Scan(
+			&user.ID,
+			&user.ID,
+			&user.FirstName,
+			&user.SecondName,
+			&user.Birthdate,
+			&user.Biography,
+			&user.City,
+		); err != nil {
+			return nil, dbErr("cannot scan users search results", err)
+		}
+		result = append(result, user)
+	}
+
+	return result, nil
+}
+
 func dbErr(operation string, err error) error {
 	return fmt.Errorf("%s: %w", operation, &domain.DBError{Err: err})
 }

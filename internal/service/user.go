@@ -32,6 +32,11 @@ type RegisterInput struct {
 	Password   string
 }
 
+type UserSearchFilter struct {
+	FirstNamePart  string
+	SecondNamePart string
+}
+
 type UserService struct {
 	users repository.UserRepository
 }
@@ -63,6 +68,15 @@ func (s *UserService) Get(ctx context.Context, userID string) (domain.User, erro
 	}
 
 	return user, nil
+}
+
+func (s *UserService) Search(ctx context.Context, filter UserSearchFilter) ([]domain.User, error) {
+	users, err := s.users.Search(ctx, filter.FirstNamePart, filter.SecondNamePart)
+	if err != nil {
+		return nil, fmt.Errorf("search user: %w", err)
+	}
+
+	return users, nil
 }
 
 func newUser(input RegisterInput) (domain.User, string, error) {
