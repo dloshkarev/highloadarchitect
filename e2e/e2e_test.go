@@ -100,7 +100,8 @@ func TestE2E_RegisterLoginGetUser(t *testing.T) {
 
 // Проверяет поиск под нагрузкой после того же запуска контейнеров, что и основной сценарий.
 // Для 1, 10, 100 и 1000 одновременных запросов отдельно ищет существующих и несуществующих пользователей.
-// Ожидает 200 и отчёт: latency и throughput запроса (1/latency), минимум, максимум, среднее и медиана.
+// Ожидает 200 и отчёт: latency (минимум, максимум, среднее, медиана) и throughput прогона.
+// Throughput — число успешных запросов, делённое на время от общего старта до завершения последнего.
 func TestE2E_SearchLoad(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping e2e test in short mode")
@@ -152,23 +153,19 @@ type searchTarget struct {
 }
 
 type requestSample struct {
-	latency    time.Duration
-	throughput float64
+	latency time.Duration
 }
 
 type loadReport struct {
-	name             string
-	latencyMin       time.Duration
-	latencyMax       time.Duration
-	latencyAvg       time.Duration
-	latencyMedian    time.Duration
-	throughputMin    float64
-	throughputMax    float64
-	throughputAvg    float64
-	throughputMedian float64
+	name          string
+	latencyMin    time.Duration
+	latencyMax    time.Duration
+	latencyAvg    time.Duration
+	latencyMedian time.Duration
+	throughput    float64
 }
 
-func runSearchLoad(ctx context.Context, client *http.Client, level int, target searchTarget) ([]requestSample, error) {
+func runSearchLoad(ctx context.Context, client *http.Client, level int, target searchTarget) ([]requestSample, time.Duration, error) {
 	samples := make([]requestSample, level)
 	errs := make([]error, level)
 	var ready sync.WaitGroup
@@ -195,15 +192,17 @@ func runSearchLoad(ctx context.Context, client *http.Client, level int, target s
 				errs[i] = err
 				return
 			}
-			samples[i] = requestSample{
-				latency:    latency,
-				throughput: 1 / latency.Seconds(),
-			}
+			samples[i] = requestSample{latency: latency}
 		}(i)
 	}
 	ready.Wait()
+	started := time.Now()
 	close(start)
 	done.Wait()
+	elapsed := time.Since(started)
+	if elapsed <= 0 {
+		elapsed = time.Nanosecond
+	}
 
 	var failed []error
 	for _, err := range errs {
@@ -217,10 +216,10 @@ func runSearchLoad(ctx context.Context, client *http.Client, level int, target s
 			shown = shown[:3]
 		}
 
-		return nil, fmt.Errorf("%d %s: ошибок %d, первые: %w", level, target.label, len(failed), errors.Join(shown...))
+		return nil, 0, fmt.Errorf("%d %s: ошибок %d, первые: %w", level, target.label, len(failed), errors.Join(shown...))
 	}
 
-	return samples, nil
+	return samples, elapsed, nil
 }
 
 func doSearch(ctx context.Context, client *http.Client, firstName, lastName string) (time.Duration, int, []byte, error) {
@@ -280,43 +279,26 @@ func validateSearchResponse(body []byte, target searchTarget) error {
 	return nil
 }
 
-func summarizeLoad(name string, samples []requestSample) loadReport {
+func summarizeLoad(name string, samples []requestSample, elapsed time.Duration) loadReport {
 	latencies := make([]time.Duration, len(samples))
-	throughputs := make([]float64, len(samples))
 	var latencySum time.Duration
-	var throughputSum float64
 	for i, sample := range samples {
 		latencies[i] = sample.latency
-		throughputs[i] = sample.throughput
 		latencySum += sample.latency
-		throughputSum += sample.throughput
 	}
 	sort.Slice(latencies, func(i, j int) bool { return latencies[i] < latencies[j] })
-	sort.Float64s(throughputs)
 
 	return loadReport{
-		name:             name,
-		latencyMin:       latencies[0],
-		latencyMax:       latencies[len(latencies)-1],
-		latencyAvg:       latencySum / time.Duration(len(latencies)),
-		latencyMedian:    medianDuration(latencies),
-		throughputMin:    throughputs[0],
-		throughputMax:    throughputs[len(throughputs)-1],
-		throughputAvg:    throughputSum / float64(len(throughputs)),
-		throughputMedian: medianFloat(throughputs),
+		name:          name,
+		latencyMin:    latencies[0],
+		latencyMax:    latencies[len(latencies)-1],
+		latencyAvg:    latencySum / time.Duration(len(latencies)),
+		latencyMedian: medianDuration(latencies),
+		throughput:    float64(len(samples)) / elapsed.Seconds(),
 	}
 }
 
 func medianDuration(sorted []time.Duration) time.Duration {
-	n := len(sorted)
-	if n%2 == 1 {
-		return sorted[n/2]
-	}
-
-	return (sorted[n/2-1] + sorted[n/2]) / 2
-}
-
-func medianFloat(sorted []float64) float64 {
 	n := len(sorted)
 	if n%2 == 1 {
 		return sorted[n/2]
@@ -334,10 +316,7 @@ func formatLoadReport(reports []loadReport) string {
 		"latency макс (мс)",
 		"latency средняя (мс)",
 		"latency медиана (мс)",
-		"throughput мин (req/s)",
-		"throughput макс (req/s)",
-		"throughput средняя (req/s)",
-		"throughput медиана (req/s)",
+		"throughput (req/s)",
 	})
 	for _, report := range reports {
 		_ = writer.Write([]string{
@@ -346,10 +325,7 @@ func formatLoadReport(reports []loadReport) string {
 			formatLatency(report.latencyMax),
 			formatLatency(report.latencyAvg),
 			formatLatency(report.latencyMedian),
-			formatThroughput(report.throughputMin),
-			formatThroughput(report.throughputMax),
-			formatThroughput(report.throughputAvg),
-			formatThroughput(report.throughputMedian),
+			formatThroughput(report.throughput),
 		})
 	}
 	writer.Flush()
