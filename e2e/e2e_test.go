@@ -5,6 +5,7 @@ package e2e_test
 import (
 	"bytes"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -325,23 +327,20 @@ func medianFloat(sorted []float64) float64 {
 
 func formatLoadReport(reports []loadReport) string {
 	var builder strings.Builder
-	fmt.Fprintf(
-		&builder,
-		"%-24s %16s %16s %16s %16s %20s %20s %20s %20s\n",
+	writer := csv.NewWriter(&builder)
+	_ = writer.Write([]string{
 		"тест",
-		"latency мин",
-		"latency макс",
-		"latency средняя",
-		"latency медиана",
-		"throughput мин",
-		"throughput макс",
-		"throughput средняя",
-		"throughput медиана",
-	)
+		"latency мин (мс)",
+		"latency макс (мс)",
+		"latency средняя (мс)",
+		"latency медиана (мс)",
+		"throughput мин (req/s)",
+		"throughput макс (req/s)",
+		"throughput средняя (req/s)",
+		"throughput медиана (req/s)",
+	})
 	for _, report := range reports {
-		fmt.Fprintf(
-			&builder,
-			"%-24s %16s %16s %16s %16s %20s %20s %20s %20s\n",
+		_ = writer.Write([]string{
 			report.name,
 			formatLatency(report.latencyMin),
 			formatLatency(report.latencyMax),
@@ -351,18 +350,19 @@ func formatLoadReport(reports []loadReport) string {
 			formatThroughput(report.throughputMax),
 			formatThroughput(report.throughputAvg),
 			formatThroughput(report.throughputMedian),
-		)
+		})
 	}
+	writer.Flush()
 
 	return builder.String()
 }
 
 func formatLatency(value time.Duration) string {
-	return fmt.Sprintf("%.3f ms", float64(value)/float64(time.Millisecond))
+	return strconv.FormatFloat(float64(value)/float64(time.Millisecond), 'f', 3, 64)
 }
 
 func formatThroughput(value float64) string {
-	return fmt.Sprintf("%.2f req/s", value)
+	return strconv.FormatFloat(value, 'f', 2, 64)
 }
 
 func truncateBody(body []byte) string {
