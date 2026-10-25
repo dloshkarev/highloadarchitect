@@ -19,7 +19,8 @@ services:
       test: ["CMD-SHELL", "pg_isready -U social -d social"]
       interval: 5s
       timeout: 3s
-      retries: 10
+      retries: 20
+      start_period: 3m
 
   app:
     build:
@@ -27,6 +28,7 @@ services:
       dockerfile: build/app.Dockerfile
     image: highloadarchitect:latest
     container_name: highloadarchitect
+    restart: on-failure
     environment:
       CONFIG_PATH: /app/config/config.yaml
       POSTGRES_HOST: postgres

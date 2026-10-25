@@ -4,7 +4,7 @@ test-integration:
 
 ## test-e2e: Запустить e2e тест
 test-e2e:
-	@go test -tags=e2e -count=1 -timeout=10m -v ./e2e/...
+	@go test -tags=e2e -count=1 -timeout=30m -v ./e2e/...
 
 ## docker-run: Запустить приложение и PostgreSQL в Docker
 docker-run:
@@ -13,6 +13,10 @@ docker-run:
 ## docker-stop: Остановить приложение и PostgreSQL
 docker-stop:
 	docker compose -f deployments/docker-compose.yaml down
+
+## docker-reset: Остановить контейнеры и удалить том Postgres, чтобы init-скрипт выполнился заново
+docker-reset:
+	docker compose -f deployments/docker-compose.yaml down -v
 
 ## run-linters: Запустить линтеры
 run-linters:
