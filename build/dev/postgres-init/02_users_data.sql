@@ -1,18 +1,4 @@
--- Локальное наполнение users. Это не goose-миграция.
--- Файл монтируется в docker-entrypoint-initdb.d и выполняется только когда
--- docker compose впервые создаёт том Postgres.
-
-SET client_encoding = 'UTF8';
-
-CREATE TABLE IF NOT EXISTS users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    first_name TEXT NOT NULL,
-    second_name TEXT NOT NULL,
-    birthdate DATE NOT NULL,
-    biography TEXT NOT NULL DEFAULT '',
-    city TEXT NOT NULL DEFAULT '',
-    password_hash TEXT NOT NULL DEFAULT '$2a$10$wPU0QusFYid9TqTV5jK21uwTOFHOc5iEvdUz7BGmZh6/Txl9aXsaq'
-);
+-- Наполнение users из people.v2.csv. Выполняется после 01_schema.sql.
 
 COPY users (second_name, first_name, birthdate, city) FROM STDIN WITH (FORMAT csv);
 Абрамов,Роберт,2012-01-01,Воткинск
