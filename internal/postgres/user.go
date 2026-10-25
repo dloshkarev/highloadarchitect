@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -94,12 +95,10 @@ func (r *UserRepository) Search(
 	const query = `
 		SELECT id, first_name, second_name, birthdate, biography, city
 		FROM users
-		WHERE id = firstName LIKE $1 and secondName LIKE $2
+		WHERE first_name LIKE $1 AND second_name LIKE $2
 		ORDER BY id
 	`
-	firstNameLike := fmt.Sprintf("%%%s", firstNamePart)
-	secondNameLike := fmt.Sprintf("%%%s", secondNamePart)
-	rows, err := r.pool.Query(ctx, query, firstNameLike, secondNameLike)
+	rows, err := r.pool.Query(ctx, query, likePrefix(firstNamePart), likePrefix(secondNamePart))
 	if err != nil {
 		return nil, dbErr("cannot do users search", err)
 	}
@@ -109,7 +108,6 @@ func (r *UserRepository) Search(
 	for rows.Next() {
 		var user domain.User
 		if err := rows.Scan(
-			&user.ID,
 			&user.ID,
 			&user.FirstName,
 			&user.SecondName,
@@ -121,8 +119,17 @@ func (r *UserRepository) Search(
 		}
 		result = append(result, user)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, dbErr("cannot read users search results", err)
+	}
 
 	return result, nil
+}
+
+func likePrefix(part string) string {
+	escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(part)
+
+	return escaped + "%"
 }
 
 func dbErr(operation string, err error) error {

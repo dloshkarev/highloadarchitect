@@ -70,8 +70,8 @@ func (h *userHandler) get(ctx *gin.Context) {
 
 func (h *userHandler) search(ctx *gin.Context) {
 	filter := service.UserSearchFilter{
-		FirstNamePart:  ctx.Param("first_name"),
-		SecondNamePart: ctx.Param("second_name"),
+		FirstNamePart:  ctx.Query("first_name"),
+		SecondNamePart: ctx.Query("last_name"),
 	}
 	users, err := h.users.Search(ctx.Request.Context(), filter)
 	if err != nil {

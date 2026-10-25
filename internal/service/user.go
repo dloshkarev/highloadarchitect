@@ -71,6 +71,15 @@ func (s *UserService) Get(ctx context.Context, userID string) (domain.User, erro
 }
 
 func (s *UserService) Search(ctx context.Context, filter UserSearchFilter) ([]domain.User, error) {
+	filter.FirstNamePart = strings.TrimSpace(filter.FirstNamePart)
+	filter.SecondNamePart = strings.TrimSpace(filter.SecondNamePart)
+	if filter.FirstNamePart == "" {
+		return nil, domain.NewValidationError("имя для поиска не заполнено")
+	}
+	if filter.SecondNamePart == "" {
+		return nil, domain.NewValidationError("фамилия для поиска не заполнена")
+	}
+
 	users, err := s.users.Search(ctx, filter.FirstNamePart, filter.SecondNamePart)
 	if err != nil {
 		return nil, fmt.Errorf("search user: %w", err)

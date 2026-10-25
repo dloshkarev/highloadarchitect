@@ -20,7 +20,7 @@ func NewRouter(users *service.UserService, auth *service.AuthService) *gin.Engin
 	router.GET("/user/get/:id", userHandler.get)
 
 	//SEARCH
-	router.POST("/user/search", userHandler.search)
+	router.GET("/user/search", userHandler.search)
 
 	router.NoRoute(func(ctx *gin.Context) {
 		writeError(ctx, domain.ErrRouteNotFound)

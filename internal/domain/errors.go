@@ -5,7 +5,6 @@ import "errors"
 var (
 	ErrNotFound      = errors.New("пользователь не найден")
 	ErrRouteNotFound = errors.New("маршрут не найден")
-	ErrRouteNotFound = errors.New("маршрут не найден")
 )
 
 type ValidationError struct {
