@@ -5,12 +5,19 @@ package e2e_test
 import (
 	"bytes"
 	"context"
+	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -91,6 +98,258 @@ func TestE2E_RegisterLoginGetUser(t *testing.T) {
 	require.NotContains(t, string(body), "password")
 }
 
+// Проверяет поиск под нагрузкой после того же запуска контейнеров, что и основной сценарий.
+// Для 1, 10, 100 и 1000 одновременных запросов отдельно ищет существующих и несуществующих пользователей.
+// Ожидает 200 и отчёт: latency (минимум, максимум, среднее, медиана) и throughput прогона.
+// Throughput — число успешных запросов, делённое на время от общего старта до завершения последнего.
+func TestE2E_SearchLoad(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
+	defer cancel()
+
+	t.Log("stopping docker containers and removing postgres volume")
+	if err := resetDockerContainers(); err != nil {
+		t.Logf("reset docker: %v", err)
+	}
+
+	t.Log("starting docker containers")
+	require.NoError(t, startDockerContainers(ctx))
+	require.NoError(t, waitAPI(ctx))
+
+	client := &http.Client{
+		Timeout: 3 * time.Minute,
+		Transport: &http.Transport{
+			MaxIdleConns:        2048,
+			MaxIdleConnsPerHost: 2048,
+			IdleConnTimeout:     time.Minute,
+		},
+	}
+	defer client.CloseIdleConnections()
+
+	levels := []int{1, 10, 100, 1000}
+	targets := []searchTarget{
+		{label: "существующие", firstName: "Роберт", lastName: "Абрамов", expectFound: true},
+		{label: "несуществующие", firstName: "Nomatch", lastName: "Missing", expectFound: false},
+	}
+	reports := make([]loadReport, 0, len(levels)*len(targets))
+	for _, level := range levels {
+		for _, target := range targets {
+			samples, err := runSearchLoad(ctx, client, level, target)
+			require.NoError(t, err)
+			reports = append(reports, summarizeLoad(fmt.Sprintf("%d %s", level, target.label), samples))
+		}
+	}
+	t.Logf("\n%s", formatLoadReport(reports))
+}
+
+type searchTarget struct {
+	label       string
+	firstName   string
+	lastName    string
+	expectFound bool
+}
+
+type requestSample struct {
+	latency time.Duration
+}
+
+type loadReport struct {
+	name          string
+	latencyMin    time.Duration
+	latencyMax    time.Duration
+	latencyAvg    time.Duration
+	latencyMedian time.Duration
+	throughput    float64
+}
+
+func runSearchLoad(ctx context.Context, client *http.Client, level int, target searchTarget) ([]requestSample, time.Duration, error) {
+	samples := make([]requestSample, level)
+	errs := make([]error, level)
+	var ready sync.WaitGroup
+	var done sync.WaitGroup
+	start := make(chan struct{})
+	ready.Add(level)
+	done.Add(level)
+	for i := range level {
+		go func(i int) {
+			defer done.Done()
+			ready.Done()
+			<-start
+
+			latency, status, body, err := doSearch(ctx, client, target.firstName, target.lastName)
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			if status != http.StatusOK {
+				errs[i] = fmt.Errorf("статус %d: %s", status, truncateBody(body))
+				return
+			}
+			if err := validateSearchResponse(body, target); err != nil {
+				errs[i] = err
+				return
+			}
+			samples[i] = requestSample{latency: latency}
+		}(i)
+	}
+	ready.Wait()
+	started := time.Now()
+	close(start)
+	done.Wait()
+	elapsed := time.Since(started)
+	if elapsed <= 0 {
+		elapsed = time.Nanosecond
+	}
+
+	var failed []error
+	for _, err := range errs {
+		if err != nil {
+			failed = append(failed, err)
+		}
+	}
+	if len(failed) > 0 {
+		shown := failed
+		if len(shown) > 3 {
+			shown = shown[:3]
+		}
+
+		return nil, 0, fmt.Errorf("%d %s: ошибок %d, первые: %w", level, target.label, len(failed), errors.Join(shown...))
+	}
+
+	return samples, elapsed, nil
+}
+
+func doSearch(ctx context.Context, client *http.Client, firstName, lastName string) (time.Duration, int, []byte, error) {
+	query := url.Values{}
+	query.Set("first_name", firstName)
+	query.Set("last_name", lastName)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiBaseURL+"/user/search?"+query.Encode(), nil)
+	if err != nil {
+		return 0, 0, nil, fmt.Errorf("создать запрос: %w", err)
+	}
+
+	started := time.Now()
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, 0, nil, fmt.Errorf("выполнить запрос: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	latency := time.Since(started)
+	if err != nil {
+		return 0, resp.StatusCode, nil, fmt.Errorf("прочитать ответ: %w", err)
+	}
+	if latency <= 0 {
+		latency = time.Nanosecond
+	}
+
+	return latency, resp.StatusCode, body, nil
+}
+
+func validateSearchResponse(body []byte, target searchTarget) error {
+	var users []struct {
+		FirstName  string `json:"first_name"`
+		SecondName string `json:"second_name"`
+	}
+	if err := json.Unmarshal(body, &users); err != nil {
+		return fmt.Errorf("разобрать ответ: %w", err)
+	}
+	if !target.expectFound {
+		if len(users) != 0 {
+			return fmt.Errorf("ожидался пустой список, получено %d", len(users))
+		}
+
+		return nil
+	}
+	if len(users) == 0 {
+		return errors.New("ожидались анкеты")
+	}
+	for _, user := range users {
+		if strings.HasPrefix(user.FirstName, target.firstName) && strings.HasPrefix(user.SecondName, target.lastName) {
+			continue
+		}
+
+		return fmt.Errorf("анкета %s %s не подходит под префикс", user.FirstName, user.SecondName)
+	}
+
+	return nil
+}
+
+func summarizeLoad(name string, samples []requestSample, elapsed time.Duration) loadReport {
+	latencies := make([]time.Duration, len(samples))
+	var latencySum time.Duration
+	for i, sample := range samples {
+		latencies[i] = sample.latency
+		latencySum += sample.latency
+	}
+	sort.Slice(latencies, func(i, j int) bool { return latencies[i] < latencies[j] })
+
+	return loadReport{
+		name:          name,
+		latencyMin:    latencies[0],
+		latencyMax:    latencies[len(latencies)-1],
+		latencyAvg:    latencySum / time.Duration(len(latencies)),
+		latencyMedian: medianDuration(latencies),
+		throughput:    float64(len(samples)) / elapsed.Seconds(),
+	}
+}
+
+func medianDuration(sorted []time.Duration) time.Duration {
+	n := len(sorted)
+	if n%2 == 1 {
+		return sorted[n/2]
+	}
+
+	return (sorted[n/2-1] + sorted[n/2]) / 2
+}
+
+func formatLoadReport(reports []loadReport) string {
+	var builder strings.Builder
+	writer := csv.NewWriter(&builder)
+	_ = writer.Write([]string{
+		"тест",
+		"latency мин (мс)",
+		"latency макс (мс)",
+		"latency средняя (мс)",
+		"latency медиана (мс)",
+		"throughput (req/s)",
+	})
+	for _, report := range reports {
+		_ = writer.Write([]string{
+			report.name,
+			formatLatency(report.latencyMin),
+			formatLatency(report.latencyMax),
+			formatLatency(report.latencyAvg),
+			formatLatency(report.latencyMedian),
+			formatThroughput(report.throughput),
+		})
+	}
+	writer.Flush()
+
+	return builder.String()
+}
+
+func formatLatency(value time.Duration) string {
+	return strconv.FormatFloat(float64(value)/float64(time.Millisecond), 'f', 3, 64)
+}
+
+func formatThroughput(value float64) string {
+	return strconv.FormatFloat(value, 'f', 2, 64)
+}
+
+func truncateBody(body []byte) string {
+	const limit = 200
+	if len(body) <= limit {
+		return string(body)
+	}
+
+	return string(body[:limit])
+}
+
 func startDockerContainers(ctx context.Context) error {
 	cmd := exec.CommandContext(ctx, "make", "docker-run")
 	cmd.Dir = ".."
@@ -104,15 +363,23 @@ func startDockerContainers(ctx context.Context) error {
 }
 
 func stopDockerContainers() error {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	return runMake("docker-stop", time.Minute, "stop docker")
+}
+
+func resetDockerContainers() error {
+	return runMake("docker-reset", 2*time.Minute, "reset docker")
+}
+
+func runMake(target string, timeout time.Duration, action string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "make", "docker-stop")
+	cmd := exec.CommandContext(ctx, "make", target)
 	cmd.Dir = ".."
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("stop docker: %w", err)
+		return fmt.Errorf("%s: %w", action, err)
 	}
 
 	return nil

@@ -1,5 +1,7 @@
 -- +goose Up
-CREATE TABLE users (
+-- IF NOT EXISTS нужен для docker-compose: build/dev/postgres-init создаёт users
+-- до старта приложения. Вне compose этой таблицы ещё нет, и её создаёт миграция.
+CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY,
     first_name TEXT NOT NULL,
     second_name TEXT NOT NULL,
@@ -9,7 +11,7 @@ CREATE TABLE users (
     password_hash TEXT NOT NULL
 );
 
-CREATE TABLE sessions (
+CREATE TABLE IF NOT EXISTS sessions (
     token UUID PRIMARY KEY,
     user_id UUID NOT NULL REFERENCES users (id),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()

@@ -65,10 +65,24 @@ func (h *userHandler) get(ctx *gin.Context) {
 
 		return
 	}
-	ctx.JSON(http.StatusOK, newUserResponse(user))
+	ctx.JSON(http.StatusOK, makeUserResponse(user))
 }
 
-func newUserResponse(user domain.User) userResponse {
+func (h *userHandler) search(ctx *gin.Context) {
+	filter := service.UserSearchFilter{
+		FirstNamePart:  ctx.Query("first_name"),
+		SecondNamePart: ctx.Query("last_name"),
+	}
+	users, err := h.users.Search(ctx.Request.Context(), filter)
+	if err != nil {
+		writeError(ctx, err)
+
+		return
+	}
+	ctx.JSON(http.StatusOK, makeUserSearchResponse(users))
+}
+
+func makeUserResponse(user domain.User) userResponse {
 	return userResponse{
 		ID:         user.ID,
 		FirstName:  user.FirstName,
@@ -77,4 +91,13 @@ func newUserResponse(user domain.User) userResponse {
 		Biography:  user.Biography,
 		City:       user.City,
 	}
+}
+
+func makeUserSearchResponse(users []domain.User) []userResponse {
+	response := make([]userResponse, len(users))
+	for i, user := range users {
+		response[i] = makeUserResponse(user)
+	}
+
+	return response
 }

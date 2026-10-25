@@ -13,9 +13,15 @@ func NewRouter(users *service.UserService, auth *service.AuthService) *gin.Engin
 
 	router := gin.New()
 	router.Use(gin.Logger(), recovery())
+
+	// AUTH
 	router.POST("/login", authHandler.login)
 	router.POST("/user/register", userHandler.register)
 	router.GET("/user/get/:id", userHandler.get)
+
+	// SEARCH
+	router.GET("/user/search", userHandler.search)
+
 	router.NoRoute(func(ctx *gin.Context) {
 		writeError(ctx, domain.ErrRouteNotFound)
 	})

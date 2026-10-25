@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -84,6 +85,51 @@ func (r *UserRepository) GetCredentials(ctx context.Context, userID string) (dom
 	}
 
 	return credentials, nil
+}
+
+func (r *UserRepository) Search(
+	ctx context.Context,
+	firstNamePart string,
+	secondNamePart string,
+) ([]domain.User, error) {
+	const query = `
+		SELECT id, first_name, second_name, birthdate, biography, city
+		FROM users
+		WHERE first_name LIKE $1 AND second_name LIKE $2
+		ORDER BY id
+	`
+	rows, err := r.pool.Query(ctx, query, likePrefix(firstNamePart), likePrefix(secondNamePart))
+	if err != nil {
+		return nil, dbErr("cannot do users search", err)
+	}
+	defer rows.Close()
+
+	result := make([]domain.User, 0)
+	for rows.Next() {
+		var user domain.User
+		if err := rows.Scan(
+			&user.ID,
+			&user.FirstName,
+			&user.SecondName,
+			&user.Birthdate,
+			&user.Biography,
+			&user.City,
+		); err != nil {
+			return nil, dbErr("cannot scan users search results", err)
+		}
+		result = append(result, user)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, dbErr("cannot read users search results", err)
+	}
+
+	return result, nil
+}
+
+func likePrefix(part string) string {
+	escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(part)
+
+	return escaped + "%"
 }
 
 func dbErr(operation string, err error) error {
