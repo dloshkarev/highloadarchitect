@@ -2,7 +2,6 @@ package api
 
 import (
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -37,7 +36,7 @@ func writeError(ctx *gin.Context, err error) {
 
 func bindJSON(ctx *gin.Context, dst any) bool {
 	if err := ctx.ShouldBindJSON(dst); err != nil {
-		writeError(ctx, domain.NewValidationError(fmt.Sprintf("некорректное тело запроса: %s", err.Error())))
+		writeError(ctx, domain.NewValidationError("некорректное тело запроса: "+err.Error()))
 
 		return false
 	}

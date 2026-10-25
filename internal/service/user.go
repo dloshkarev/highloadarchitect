@@ -59,7 +59,7 @@ func (s *UserService) Register(ctx context.Context, input RegisterInput) (string
 
 func (s *UserService) Get(ctx context.Context, userID string) (domain.User, error) {
 	if _, err := uuid.Parse(userID); err != nil {
-		return domain.User{}, domain.NewValidationError("идентификатор пользователя должен быть UUID")
+		return domain.User{}, validationError("идентификатор пользователя должен быть UUID")
 	}
 
 	user, err := s.users.GetByID(ctx, userID)
@@ -74,10 +74,10 @@ func (s *UserService) Search(ctx context.Context, filter UserSearchFilter) ([]do
 	filter.FirstNamePart = strings.TrimSpace(filter.FirstNamePart)
 	filter.SecondNamePart = strings.TrimSpace(filter.SecondNamePart)
 	if filter.FirstNamePart == "" {
-		return nil, domain.NewValidationError("имя для поиска не заполнено")
+		return nil, validationError("имя для поиска не заполнено")
 	}
 	if filter.SecondNamePart == "" {
-		return nil, domain.NewValidationError("фамилия для поиска не заполнена")
+		return nil, validationError("фамилия для поиска не заполнена")
 	}
 
 	users, err := s.users.Search(ctx, filter.FirstNamePart, filter.SecondNamePart)
@@ -99,7 +99,7 @@ func newUser(input RegisterInput) (domain.User, string, error) {
 
 	birthdate, err := time.Parse(time.DateOnly, strings.TrimSpace(input.Birthdate))
 	if err != nil {
-		return domain.User{}, "", domain.NewValidationError("дата рождения должна быть в формате ГГГГ-ММ-ДД")
+		return domain.User{}, "", validationError("дата рождения должна быть в формате ГГГГ-ММ-ДД")
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
@@ -119,36 +119,45 @@ func newUser(input RegisterInput) (domain.User, string, error) {
 
 func validateRegisterInput(input RegisterInput) error {
 	if input.FirstName == "" {
-		return domain.NewValidationError("имя не заполнено")
+		return validationError("имя не заполнено")
 	}
 	if input.SecondName == "" {
-		return domain.NewValidationError("фамилия не заполнена")
+		return validationError("фамилия не заполнена")
 	}
 	if utf8.RuneCountInString(input.FirstName) > maxNameLength {
-		return domain.NewValidationError(fmt.Sprintf("имя длиннее %d символов", maxNameLength))
+		return validationError(fmt.Sprintf("имя длиннее %d символов", maxNameLength))
 	}
 	if utf8.RuneCountInString(input.SecondName) > maxNameLength {
-		return domain.NewValidationError(fmt.Sprintf("фамилия длиннее %d символов", maxNameLength))
+		return validationError(fmt.Sprintf("фамилия длиннее %d символов", maxNameLength))
 	}
 	if utf8.RuneCountInString(input.City) > maxCityLength {
-		return domain.NewValidationError(fmt.Sprintf("город длиннее %d символов", maxCityLength))
+		return validationError(fmt.Sprintf("город длиннее %d символов", maxCityLength))
 	}
 	if utf8.RuneCountInString(input.Biography) > maxBiographyLength {
-		return domain.NewValidationError(fmt.Sprintf("биография длиннее %d символов", maxBiographyLength))
+		return validationError(fmt.Sprintf("биография длиннее %d символов", maxBiographyLength))
 	}
-	passwordLength := utf8.RuneCountInString(input.Password)
+
+	return validatePassword(input.Password)
+}
+
+func validatePassword(password string) error {
+	passwordLength := utf8.RuneCountInString(password)
 	if passwordLength < minPasswordLength {
-		return domain.NewValidationError(fmt.Sprintf("пароль короче %d символов", minPasswordLength))
+		return validationError(fmt.Sprintf("пароль короче %d символов", minPasswordLength))
 	}
 	if passwordLength > maxPasswordLength {
-		return domain.NewValidationError(fmt.Sprintf("пароль длиннее %d символов", maxPasswordLength))
+		return validationError(fmt.Sprintf("пароль длиннее %d символов", maxPasswordLength))
 	}
-	if len(input.Password) > bcryptMaxPasswordBytes {
-		return domain.NewValidationError("пароль слишком длинный для сохранения")
+	if len(password) > bcryptMaxPasswordBytes {
+		return validationError("пароль слишком длинный для сохранения")
 	}
-	if strings.ContainsRune(input.Password, 0) {
-		return domain.NewValidationError("пароль содержит нулевой символ")
+	if strings.ContainsRune(password, 0) {
+		return validationError("пароль содержит нулевой символ")
 	}
 
 	return nil
+}
+
+func validationError(message string) error {
+	return fmt.Errorf("%w", domain.NewValidationError(message))
 }
