@@ -11,8 +11,11 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"sort"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -214,6 +217,111 @@ func TestLoginReplacesPreviousToken(t *testing.T) {
 	require.Equal(t, []string{second}, tokens)
 }
 
+// Проверяет поиск анкет по префиксу имени и фамилии.
+// Ожидает 200, только анкеты с обоими префиксами, сортировку по id и пустой список, если совпадений нет.
+func TestSearchUsersByNamePrefix(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	mark := strings.ReplaceAll(uuid.NewString(), "-", "")
+	firstPrefix := "Конст" + mark
+	lastPrefix := "Оси" + mark
+	matching := []profile{
+		namedProfile(firstPrefix+"антин", lastPrefix+"пов"),
+		namedProfile(firstPrefix, lastPrefix),
+		namedProfile(firstPrefix+"антин", lastPrefix+"нин"),
+	}
+	registered := make([]registeredUser, 0, len(matching))
+	for i, user := range matching {
+		user.Biography = fmt.Sprintf("анкета %d", i)
+		user.City = fmt.Sprintf("город %d", i)
+		registered = append(registered, registeredUser{
+			userID:  registerUser(t, user),
+			profile: user,
+		})
+	}
+	sort.Slice(registered, func(i, j int) bool {
+		return registered[i].userID < registered[j].userID
+	})
+
+	registerUser(t, namedProfile(firstPrefix+"антин", "Петров"+mark))
+	registerUser(t, namedProfile("Марк"+mark, lastPrefix+"пов"))
+	registerUser(t, namedProfile("Х"+firstPrefix, lastPrefix))
+	registerUser(t, namedProfile(strings.ToLower(firstPrefix), strings.ToLower(lastPrefix)))
+
+	status, body := searchUsers(t, "  "+firstPrefix+"  ", " "+lastPrefix)
+	require.Equal(t, http.StatusOK, status)
+	require.NotContains(t, string(body), "password")
+
+	got := decodeUsers(t, body)
+	require.Len(t, got, len(registered))
+	for i, user := range registered {
+		require.Equal(t, userView{
+			ID:         user.userID,
+			FirstName:  user.profile.FirstName,
+			SecondName: user.profile.SecondName,
+			Birthdate:  user.profile.Birthdate,
+			Biography:  user.profile.Biography,
+			City:       user.profile.City,
+		}, got[i])
+	}
+
+	status, body = searchUsers(t, firstPrefix+"нет", lastPrefix)
+	require.Equal(t, http.StatusOK, status)
+	require.JSONEq(t, "[]", string(body))
+}
+
+// Проверяет поиск, когда в префиксе есть символы шаблона LIKE.
+// Ожидает только анкету, в которой эти символы стоят как обычный текст.
+func TestSearchTreatsLikeWildcardsAsText(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	mark := strings.ReplaceAll(uuid.NewString(), "-", "")
+	literal := namedProfile("Имя"+mark+"%", "Фам"+mark+"_")
+	userID := registerUser(t, literal)
+	registerUser(t, namedProfile("Имя"+mark+"X", "Фам"+mark+"Y"))
+
+	status, body := searchUsers(t, literal.FirstName, literal.SecondName)
+	require.Equal(t, http.StatusOK, status)
+
+	got := decodeUsers(t, body)
+	require.Len(t, got, 1)
+	require.Equal(t, userID, got[0].ID)
+	require.Equal(t, literal.FirstName, got[0].FirstName)
+	require.Equal(t, literal.SecondName, got[0].SecondName)
+}
+
+// Проверяет поиск без имени или без фамилии.
+// Ожидает 400 и текст ошибки о незаполненном поле.
+func TestSearchRejectsEmptyName(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	status, body := doJSON(t, http.MethodGet, "/user/search", nil)
+	require.Equal(t, http.StatusBadRequest, status)
+	require.Equal(t, "имя для поиска не заполнено", errorMessage(t, body))
+
+	status, body = doJSON(t, http.MethodGet, "/user/search?"+url.Values{"last_name": {"Оси"}}.Encode(), nil)
+	require.Equal(t, http.StatusBadRequest, status)
+	require.Equal(t, "имя для поиска не заполнено", errorMessage(t, body))
+
+	status, body = searchUsers(t, "   ", "Оси")
+	require.Equal(t, http.StatusBadRequest, status)
+	require.Equal(t, "имя для поиска не заполнено", errorMessage(t, body))
+
+	status, body = searchUsers(t, "Конст", "")
+	require.Equal(t, http.StatusBadRequest, status)
+	require.Equal(t, "фамилия для поиска не заполнена", errorMessage(t, body))
+
+	status, body = searchUsers(t, "Конст", "   ")
+	require.Equal(t, http.StatusBadRequest, status)
+	require.Equal(t, "фамилия для поиска не заполнена", errorMessage(t, body))
+}
+
 // Проверяет запрос к незарегистрированному маршруту.
 // Ожидает 404 и текст «маршрут не найден».
 func TestUnknownRoute(t *testing.T) {
@@ -348,6 +456,20 @@ type profile struct {
 	Password   string `json:"password"`
 }
 
+type userView struct {
+	ID         string `json:"id"`
+	FirstName  string `json:"first_name"`
+	SecondName string `json:"second_name"`
+	Birthdate  string `json:"birthdate"`
+	Biography  string `json:"biography"`
+	City       string `json:"city"`
+}
+
+type registeredUser struct {
+	userID  string
+	profile profile
+}
+
 func sampleProfile() profile {
 	return profile{
 		FirstName:  "Иван",
@@ -357,6 +479,14 @@ func sampleProfile() profile {
 		City:       "Москва",
 		Password:   "password1",
 	}
+}
+
+func namedProfile(firstName, secondName string) profile {
+	user := sampleProfile()
+	user.FirstName = firstName
+	user.SecondName = secondName
+
+	return user
 }
 
 func registerUser(t *testing.T, user profile) string {
@@ -372,6 +502,25 @@ func registerUser(t *testing.T, user profile) string {
 	require.NoError(t, uuid.Validate(created.UserID))
 
 	return created.UserID
+}
+
+func searchUsers(t *testing.T, firstName, lastName string) (int, []byte) {
+	t.Helper()
+
+	query := url.Values{}
+	query.Set("first_name", firstName)
+	query.Set("last_name", lastName)
+
+	return doJSON(t, http.MethodGet, "/user/search?"+query.Encode(), nil)
+}
+
+func decodeUsers(t *testing.T, body []byte) []userView {
+	t.Helper()
+
+	var users []userView
+	require.NoError(t, json.Unmarshal(body, &users))
+
+	return users
 }
 
 func login(t *testing.T, userID, password string) string {
