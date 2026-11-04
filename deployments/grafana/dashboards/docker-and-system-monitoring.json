@@ -22,7 +22,7 @@
     {
       "id": 1,
       "type": "timeseries",
-      "title": "CPU usage \u2014 postgres",
+      "title": "CPU usage \u2014 postgres instances",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -70,8 +70,28 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "rate(container_cpu_usage_seconds_total{id=\"/docker/b10159912c4a988d7457ded5f75a276e476c316f738aa248a44375d70512d354\", cpu=\"total\"}[$__rate_interval]) * 100",
-          "legendFormat": "postgres",
+          "expr": "rate(container_cpu_usage_seconds_total{id=\"/docker/f50e13021367bd144971d99671d3c782e4c210dd95afbe63036deb6d6924b764\", cpu=\"total\"}[$__rate_interval]) * 100",
+          "legendFormat": "pgmaster",
+          "range": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(container_cpu_usage_seconds_total{id=\"/docker/4d9a7e6a62d23eae1a6dab672ee442179d5314cfd52126be6254b234a5828203\", cpu=\"total\"}[$__rate_interval]) * 100",
+          "legendFormat": "pgslave",
+          "range": true
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(container_cpu_usage_seconds_total{id=\"/docker/d2c471aff772b3594f7dc20088f12b14bb9c4acb265b8691f967b25f2dceee9b\", cpu=\"total\"}[$__rate_interval]) * 100",
+          "legendFormat": "pgasyncslave",
           "range": true
         }
       ]

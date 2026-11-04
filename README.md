@@ -53,9 +53,21 @@ make docker-run
 make docker-stop
 ```
 
+Полный перезапуск с нуля (удалить контейнеры, тома и образ приложения, пересобрать, поднять кластер и обновить дашборд Grafana):
+
+```bash
+make docker-fresh
+```
+
 ## Мониторинг (Grafana)
 
-Вместе с приложением поднимаются Prometheus, node-exporter (метрики хоста), cAdvisor (метрики Docker-контейнеров) и Grafana с дашбордом [«Docker and system monitoring»](https://grafana.com/grafana/dashboards/893-main/) — системные метрики (CPU, память, диск, сеть) и метрики контейнеров на одном дашборде. Источник данных и дашборд настраиваются автоматически при запуске.
+Вместе с приложением поднимаются Prometheus, node-exporter (метрики хоста), cAdvisor (метрики Docker-контейнеров) и Grafana с дашбордом «Postgres CPU usage» — CPU контейнеров `pgmaster`, `pgslave` и `pgasyncslave` на одном графике, легенда таблицей справа (min/max/mean). Источник данных и дашборд настраиваются автоматически при запуске.
+
+cAdvisor видит контейнеры по Docker ID, поэтому после пересоздания pg-контейнеров (`make docker-reset`, пересборка) дашборд нужно обновить:
+
+```bash
+make update-dashboard
+```
 
 Открыть при запущенном Docker:
 
@@ -66,6 +78,22 @@ make docker-stop
 
 ```bash
 make metrics-reset
+```
+
+## Репликация PostgreSQL
+
+Сервис `pgmaster` — мастер кластера потоковой репликации, `pgslave` и `pgasyncslave` — асинхронные реплики. Приложение по-прежнему ходит на мастер, реплики работают в режиме read-only.
+
+- Мастер: `localhost:5432`. Реплики: `localhost:5434` (`pgslave`), `localhost:5435` (`pgasyncslave`). Пользователь `social`, пароль `social`, база `social`.
+- Реплики клонируют мастер через `pg_basebackup` при первом старте на пустом томе (`build/dev/pg_replica_bootstrap.sh`), поэтому полный цикл поднятия кластера — `make docker-reset && make docker-run`.
+- Роль для репликации (`replicator`) создаётся скриптом `build/dev/postgres-init/00_replication.sql`, правила доступа — в `build/dev/postgres/pg_hba.conf`.
+
+Маршрутизация запросов в приложении — два пула подключений: write-пул на мастер и read-пул на реплики (round-robin между ними). На реплики уходит только `GET /user/search`; запись и чтения, которым нужны свежие данные (`register`, `login`, `user/get`), идут на мастер. Адреса реплик задаются переменной `POSTGRES_READ_HOSTS` (через запятую, `host:port`); если не задана — всё чтение идёт на мастер.
+
+Проверить состояние репликации на мастере:
+
+```bash
+docker exec highloadarchitect-pgmaster psql -U social -d social -c "select application_name, state, sync_state from pg_stat_replication;"
 ```
 
 ## Postman

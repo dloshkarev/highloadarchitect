@@ -1,9 +1,21 @@
 version: "3.8"
 
 services:
-  postgres:
+  pgmaster:
     image: postgres:18-alpine
-    container_name: highloadarchitect-postgres
+    container_name: highloadarchitect-pgmaster
+    command:
+      - postgres
+      - -c
+      - wal_level=replica
+      - -c
+      - max_wal_senders=4
+      - -c
+      - wal_keep_size=1024
+      - -c
+      - ssl=off
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf
     environment:
       POSTGRES_USER: social
       POSTGRES_PASSWORD: social
@@ -13,6 +25,7 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql
       - ../build/dev/postgres-init:/docker-entrypoint-initdb.d:ro
+      - ../build/dev/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
     networks:
       - highloadarchitect-network
     healthcheck:
@@ -21,6 +34,62 @@ services:
       timeout: 3s
       retries: 20
       start_period: 3m
+
+  pgslave:
+    image: postgres:18-alpine
+    container_name: highloadarchitect-pgslave
+    entrypoint: ["/usr/local/bin/pg_replica_bootstrap.sh"]
+    command: ["postgres"]
+    environment:
+      POSTGRES_USER: social
+      POSTGRES_PASSWORD: social
+      POSTGRES_DB: social
+      REPLICATION_PASSWORD: replicator
+      REPLICA_NAME: pgslave
+    ports:
+      - "5434:5432"
+    volumes:
+      - pgslave-data:/var/lib/postgresql
+      - ../build/dev/pg_replica_bootstrap.sh:/usr/local/bin/pg_replica_bootstrap.sh:ro
+    networks:
+      - highloadarchitect-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U social -d social"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 3m
+    depends_on:
+      pgmaster:
+        condition: service_healthy
+
+  pgasyncslave:
+    image: postgres:18-alpine
+    container_name: highloadarchitect-pgasyncslave
+    entrypoint: ["/usr/local/bin/pg_replica_bootstrap.sh"]
+    command: ["postgres"]
+    environment:
+      POSTGRES_USER: social
+      POSTGRES_PASSWORD: social
+      POSTGRES_DB: social
+      REPLICATION_PASSWORD: replicator
+      REPLICA_NAME: pgasyncslave
+    ports:
+      - "5435:5432"
+    volumes:
+      - pgasyncslave-data:/var/lib/postgresql
+      - ../build/dev/pg_replica_bootstrap.sh:/usr/local/bin/pg_replica_bootstrap.sh:ro
+    networks:
+      - highloadarchitect-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U social -d social"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 3m
+    depends_on:
+      pgmaster:
+        condition: service_healthy
 
   app:
     build:
@@ -31,14 +100,15 @@ services:
     restart: on-failure
     environment:
       CONFIG_PATH: /app/config/config.yaml
-      POSTGRES_HOST: postgres
+      POSTGRES_HOST: pgmaster
       POSTGRES_PASSWORD: social
+      POSTGRES_READ_HOSTS: "pgslave:5432,pgasyncslave:5432"
     ports:
       - "8080:8080"
     networks:
       - highloadarchitect-network
     depends_on:
-      postgres:
+      pgmaster:
         condition: service_healthy
 
   prometheus:
@@ -105,4 +175,6 @@ networks:
 
 volumes:
   postgres-data:
+  pgslave-data:
+  pgasyncslave-data:
   grafana-data:

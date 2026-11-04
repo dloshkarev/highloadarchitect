@@ -11,6 +11,7 @@ postgres:
   port: "5432"
   user: "social"
   database: "social"
+  read_hosts: "" # адреса реплик через запятую, например "localhost:5434,localhost:5435"; пусто — чтение с мастера
   max_conns: 10
   max_conn_lifetime: "30m"
   max_conn_idle_time: "5m"
