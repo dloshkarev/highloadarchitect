@@ -15,20 +15,20 @@
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "Postgres CPU usage",
+  "title": "Postgres cluster",
   "uid": "postgres-cpu",
   "version": 1,
   "panels": [
     {
       "id": 1,
       "type": "timeseries",
-      "title": "CPU usage \u2014 postgres instances",
+      "title": "CPU usage \u2014 postgres nodes",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
-        "h": 14,
+        "h": 12,
         "w": 24,
         "x": 0,
         "y": 0
@@ -70,8 +70,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "rate(container_cpu_usage_seconds_total{id=\"/docker/f50e13021367bd144971d99671d3c782e4c210dd95afbe63036deb6d6924b764\", cpu=\"total\"}[$__rate_interval]) * 100",
-          "legendFormat": "pgmaster",
+          "expr": "rate(container_cpu_usage_seconds_total{id=\"/docker/4e758946aa1b8ef10e9d4327f515d35b7d0a393999dd91d6d2a4cec1cc481898\", cpu=\"total\"}[$__rate_interval]) * 100",
+          "legendFormat": "patroni1",
           "range": true
         },
         {
@@ -80,8 +80,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "rate(container_cpu_usage_seconds_total{id=\"/docker/4d9a7e6a62d23eae1a6dab672ee442179d5314cfd52126be6254b234a5828203\", cpu=\"total\"}[$__rate_interval]) * 100",
-          "legendFormat": "pgslave",
+          "expr": "rate(container_cpu_usage_seconds_total{id=\"/docker/30fca9261405826c4d1ed4c3ef6f5b69021c85a95b0b3fbb8423c98dc0dd2354\", cpu=\"total\"}[$__rate_interval]) * 100",
+          "legendFormat": "patroni2",
           "range": true
         },
         {
@@ -90,8 +90,65 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "rate(container_cpu_usage_seconds_total{id=\"/docker/d2c471aff772b3594f7dc20088f12b14bb9c4acb265b8691f967b25f2dceee9b\", cpu=\"total\"}[$__rate_interval]) * 100",
-          "legendFormat": "pgasyncslave",
+          "expr": "rate(container_cpu_usage_seconds_total{id=\"/docker/2abb99a412d26b049ec164443f8b2b7d4e42a2feab1a16cd707759ba6bf47de4\", cpu=\"total\"}[$__rate_interval]) * 100",
+          "legendFormat": "patroni3",
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Committed transactions (total)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "pg_stat_database_xact_commit{datname=\"social\"}",
+          "legendFormat": "{{pg_node}}",
           "range": true
         }
       ]

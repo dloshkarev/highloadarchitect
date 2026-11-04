@@ -28,7 +28,7 @@ update-dashboard:
 
 ## docker-fresh: Удалить контейнеры, тома и образ приложения, пересобрать и поднять всё с нуля
 docker-fresh:
-	docker compose -f deployments/docker-compose.yaml down -v --rmi local
+	docker compose -f deployments/docker-compose.yaml down -v --rmi local --remove-orphans
 	docker compose -f deployments/docker-compose.yaml up -d --build
 	$(MAKE) update-dashboard
 

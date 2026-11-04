@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Обновляет дашборд Grafana с CPU-графиками контейнеров PostgreSQL.
+"""Обновляет дашборд Grafana с метриками PostgreSQL-кластера.
 
 cAdvisor внутри Docker Desktop видит контейнеры только по сырым Docker ID,
-поэтому скрипт подставляет актуальные ID контейнеров pgmaster/pgslave/pgasyncslave
-в запросы панели. Запускать после пересоздания pg-контейнеров:
+поэтому скрипт подставляет актуальные ID контейнеров patroni1..3 в запросы
+панелей. Запускать после пересоздания pg-контейнеров:
 make update-dashboard
 """
 
@@ -13,7 +13,9 @@ import sys
 from pathlib import Path
 
 DASHBOARD_PATH = Path(__file__).resolve().parent.parent.parent / "deployments/grafana/dashboards/docker-and-system-monitoring.json"
-CONTAINERS = ["pgmaster", "pgslave", "pgasyncslave"]
+CONTAINERS = ["patroni1", "patroni2", "patroni3"]
+
+DATASOURCE = {"type": "prometheus", "uid": "prometheus"}
 
 
 def container_id(name: str) -> str:
@@ -28,16 +30,65 @@ def container_id(name: str) -> str:
     return result.stdout.strip()
 
 
+def make_target(ref_id: str, expr: str, legend: str) -> dict:
+    return {
+        "refId": ref_id,
+        "datasource": DATASOURCE,
+        "expr": expr,
+        "legendFormat": legend,
+        "range": True,
+    }
+
+
+def make_panel(panel_id: int, title: str, y: int, unit: str, targets: list[dict]) -> dict:
+    return {
+        "id": panel_id,
+        "type": "timeseries",
+        "title": title,
+        "datasource": DATASOURCE,
+        "gridPos": {"h": 12, "w": 24, "x": 0, "y": y},
+        "fieldConfig": {
+            "defaults": {
+                "unit": unit,
+                "min": 0,
+                "custom": {
+                    "drawStyle": "line",
+                    "lineWidth": 2,
+                    "fillOpacity": 10,
+                    "showPoints": "never",
+                    "spanNulls": False,
+                },
+            },
+            "overrides": [],
+        },
+        "options": {
+            "legend": {
+                "displayMode": "table",
+                "placement": "right",
+                "showLegend": True,
+                "calcs": ["min", "max", "mean"],
+            },
+            "tooltip": {"mode": "multi", "sort": "none"},
+        },
+        "targets": targets,
+    }
+
+
 def build_dashboard(ids: dict[str, str]) -> dict:
-    targets = [
-        {
-            "refId": chr(ord("A") + i),
-            "datasource": {"type": "prometheus", "uid": "prometheus"},
-            "expr": f'rate(container_cpu_usage_seconds_total{{id="/docker/{cid}", cpu="total"}}[$__rate_interval]) * 100',
-            "legendFormat": name,
-            "range": True,
-        }
+    cpu_targets = [
+        make_target(
+            chr(ord("A") + i),
+            f'rate(container_cpu_usage_seconds_total{{id="/docker/{cid}", cpu="total"}}[$__rate_interval]) * 100',
+            name,
+        )
         for i, (name, cid) in enumerate(ids.items())
+    ]
+    tps_targets = [
+        make_target(
+            "A",
+            'pg_stat_database_xact_commit{datname="social"}',
+            "{{pg_node}}",
+        )
     ]
 
     return {
@@ -50,41 +101,12 @@ def build_dashboard(ids: dict[str, str]) -> dict:
         "time": {"from": "now-1h", "to": "now"},
         "timepicker": {},
         "timezone": "browser",
-        "title": "Postgres CPU usage",
+        "title": "Postgres cluster",
         "uid": "postgres-cpu",
         "version": 1,
         "panels": [
-            {
-                "id": 1,
-                "type": "timeseries",
-                "title": "CPU usage — postgres instances",
-                "datasource": {"type": "prometheus", "uid": "prometheus"},
-                "gridPos": {"h": 14, "w": 24, "x": 0, "y": 0},
-                "fieldConfig": {
-                    "defaults": {
-                        "unit": "percent",
-                        "min": 0,
-                        "custom": {
-                            "drawStyle": "line",
-                            "lineWidth": 2,
-                            "fillOpacity": 10,
-                            "showPoints": "never",
-                            "spanNulls": False,
-                        },
-                    },
-                    "overrides": [],
-                },
-                "options": {
-                    "legend": {
-                        "displayMode": "table",
-                        "placement": "right",
-                        "showLegend": True,
-                        "calcs": ["min", "max", "mean"],
-                    },
-                    "tooltip": {"mode": "multi", "sort": "none"},
-                },
-                "targets": targets,
-            }
+            make_panel(1, "CPU usage — postgres nodes", 0, "percent", cpu_targets),
+            make_panel(2, "Committed transactions (total)", 12, "short", tps_targets),
         ],
     }
 

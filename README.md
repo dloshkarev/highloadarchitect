@@ -61,7 +61,7 @@ make docker-fresh
 
 ## Мониторинг (Grafana)
 
-Вместе с приложением поднимаются Prometheus, node-exporter (метрики хоста), cAdvisor (метрики Docker-контейнеров) и Grafana с дашбордом «Postgres CPU usage» — CPU контейнеров `pgmaster`, `pgslave` и `pgasyncslave` на одном графике, легенда таблицей справа (min/max/mean). Источник данных и дашборд настраиваются автоматически при запуске.
+Вместе с приложением поднимаются Prometheus, node-exporter (метрики хоста), cAdvisor (метрики контейнеров), postgres-exporter на каждый узел Patroni (метрики БД) и Grafana с дашбордом «Postgres cluster»: CPU узлов `patroni1`–`patroni3` и кумулятивное число закоммиченных транзакций по узлам (`pg_stat_database_xact_commit`). Метрики Patroni (роль узла, лаг реплик) тоже собираются в Prometheus. Источник данных и дашборд настраиваются автоматически при запуске.
 
 cAdvisor видит контейнеры по Docker ID, поэтому после пересоздания pg-контейнеров (`make docker-reset`, пересборка) дашборд нужно обновить:
 
@@ -80,21 +80,25 @@ make update-dashboard
 make metrics-reset
 ```
 
-## Репликация PostgreSQL
+## Кластер PostgreSQL (Patroni)
 
-Сервис `pgmaster` — мастер кластера потоковой репликации, `pgslave` и `pgasyncslave` — асинхронные реплики. Приложение по-прежнему ходит на мастер, реплики работают в режиме read-only.
+Кластер под управлением Patroni: три узла `patroni1`–`patroni3` (образ `build/patroni.Dockerfile`, конфиг `deployments/patroni/patroni.yml`), состояние кластера — в `etcd`. Лидер и реплики выбираются Patroni автоматически, при первом старте лидер накатывает схему и наполнение через `deployments/patroni/post_bootstrap.sh`.
 
-- Мастер: `localhost:5432`. Реплики: `localhost:5434` (`pgslave`), `localhost:5435` (`pgasyncslave`). Пользователь `social`, пароль `social`, база `social`.
-- Реплики клонируют мастер через `pg_basebackup` при первом старте на пустом томе (`build/dev/pg_replica_bootstrap.sh`), поэтому полный цикл поднятия кластера — `make docker-reset && make docker-run`.
-- Роль для репликации (`replicator`) создаётся скриптом `build/dev/postgres-init/00_replication.sql`, правила доступа — в `build/dev/postgres/pg_hba.conf`.
+Перед кластером стоит HAProxy (`deployments/haproxy/haproxy.cfg`), роль узлов определяется по REST API Patroni:
 
-Маршрутизация запросов в приложении — два пула подключений: write-пул на мастер и read-пул на реплики (round-robin между ними). На реплики уходит только `GET /user/search`; запись и чтения, которым нужны свежие данные (`register`, `login`, `user/get`), идут на мастер. Адреса реплик задаются переменной `POSTGRES_READ_HOSTS` (через запятую, `host:port`); если не задана — всё чтение идёт на мастер.
+- `haproxy:5000` (с хоста `localhost:5000`) — запись, ведёт на лидера;
+- `haproxy:5001` (с хоста `localhost:5001`) — чтение, round-robin по репликам;
+- `localhost:8404` — статистика HAProxy.
 
-Проверить состояние репликации на мастере:
+Приложение ходит только через HAProxy: write-пул на порт 5000, read-пул (поиск анкет) на 5001. Прямые порты узлов для отладки: `localhost:5433`–`5435` (пользователь `social`, пароль `social`, база `social`).
+
+Состояние кластера:
 
 ```bash
-docker exec highloadarchitect-pgmaster psql -U social -d social -c "select application_name, state, sync_state from pg_stat_replication;"
+docker exec highloadarchitect-patroni1 gosu postgres patronictl -c /etc/patroni/patroni.yml list
 ```
+
+Полный цикл поднятия с нуля — `make docker-fresh` (реплики клонируют лидер, занимает пару минут; приложение стартует, когда реплики встанут в строй).
 
 ## Postman
 

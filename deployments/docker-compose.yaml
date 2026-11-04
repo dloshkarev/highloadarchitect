@@ -1,95 +1,131 @@
 version: "3.8"
 
+x-patroni-node: &patroni-node
+  build:
+    context: ..
+    dockerfile: build/patroni.Dockerfile
+  image: highloadarchitect-patroni:latest
+  entrypoint: ["/usr/local/bin/patroni-entrypoint.sh"]
+  command: ["/etc/patroni/patroni.yml"]
+  volumes:
+    - ../deployments/patroni/patroni.yml:/etc/patroni/patroni.yml:ro
+    - ../deployments/patroni/post_bootstrap.sh:/etc/patroni/post_bootstrap.sh:ro
+    - ../build/dev/postgres-init:/seed:ro
+  networks:
+    - highloadarchitect-network
+  depends_on:
+    - etcd
+
 services:
-  pgmaster:
-    image: postgres:18-alpine
-    container_name: highloadarchitect-pgmaster
-    command:
-      - postgres
-      - -c
-      - wal_level=replica
-      - -c
-      - max_wal_senders=4
-      - -c
-      - wal_keep_size=1024
-      - -c
-      - ssl=off
-      - -c
-      - hba_file=/etc/postgresql/pg_hba.conf
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.21
+    container_name: highloadarchitect-etcd
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: social
-      POSTGRES_PASSWORD: social
-      POSTGRES_DB: social
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres-data:/var/lib/postgresql
-      - ../build/dev/postgres-init:/docker-entrypoint-initdb.d:ro
-      - ../build/dev/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      ETCD_LISTEN_CLIENT_URLS: "http://0.0.0.0:2379"
+      ETCD_ADVERTISE_CLIENT_URLS: "http://etcd:2379"
+    expose:
+      - "2379"
     networks:
       - highloadarchitect-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U social -d social"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-      start_period: 3m
 
-  pgslave:
-    image: postgres:18-alpine
-    container_name: highloadarchitect-pgslave
-    entrypoint: ["/usr/local/bin/pg_replica_bootstrap.sh"]
-    command: ["postgres"]
+  patroni1:
+    <<: *patroni-node
+    container_name: highloadarchitect-patroni1
     environment:
-      POSTGRES_USER: social
-      POSTGRES_PASSWORD: social
-      POSTGRES_DB: social
-      REPLICATION_PASSWORD: replicator
-      REPLICA_NAME: pgslave
+      PATRONI_NAME: patroni1
+      PATRONI_RESTAPI_CONNECT_ADDRESS: patroni1:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: patroni1:5432
+    ports:
+      - "5433:5432"
+      - "8008:8008"
+    volumes:
+      - patroni1-data:/var/lib/postgresql/data
+      - ../deployments/patroni/patroni.yml:/etc/patroni/patroni.yml:ro
+      - ../deployments/patroni/post_bootstrap.sh:/etc/patroni/post_bootstrap.sh:ro
+      - ../build/dev/postgres-init:/seed:ro
+
+  patroni2:
+    <<: *patroni-node
+    container_name: highloadarchitect-patroni2
+    environment:
+      PATRONI_NAME: patroni2
+      PATRONI_RESTAPI_CONNECT_ADDRESS: patroni2:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: patroni2:5432
     ports:
       - "5434:5432"
+      - "8009:8008"
     volumes:
-      - pgslave-data:/var/lib/postgresql
-      - ../build/dev/pg_replica_bootstrap.sh:/usr/local/bin/pg_replica_bootstrap.sh:ro
-    networks:
-      - highloadarchitect-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U social -d social"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-      start_period: 3m
-    depends_on:
-      pgmaster:
-        condition: service_healthy
+      - patroni2-data:/var/lib/postgresql/data
+      - ../deployments/patroni/patroni.yml:/etc/patroni/patroni.yml:ro
+      - ../deployments/patroni/post_bootstrap.sh:/etc/patroni/post_bootstrap.sh:ro
+      - ../build/dev/postgres-init:/seed:ro
 
-  pgasyncslave:
-    image: postgres:18-alpine
-    container_name: highloadarchitect-pgasyncslave
-    entrypoint: ["/usr/local/bin/pg_replica_bootstrap.sh"]
-    command: ["postgres"]
+  patroni3:
+    <<: *patroni-node
+    container_name: highloadarchitect-patroni3
     environment:
-      POSTGRES_USER: social
-      POSTGRES_PASSWORD: social
-      POSTGRES_DB: social
-      REPLICATION_PASSWORD: replicator
-      REPLICA_NAME: pgasyncslave
+      PATRONI_NAME: patroni3
+      PATRONI_RESTAPI_CONNECT_ADDRESS: patroni3:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: patroni3:5432
     ports:
       - "5435:5432"
+      - "8010:8008"
     volumes:
-      - pgasyncslave-data:/var/lib/postgresql
-      - ../build/dev/pg_replica_bootstrap.sh:/usr/local/bin/pg_replica_bootstrap.sh:ro
+      - patroni3-data:/var/lib/postgresql/data
+      - ../deployments/patroni/patroni.yml:/etc/patroni/patroni.yml:ro
+      - ../deployments/patroni/post_bootstrap.sh:/etc/patroni/post_bootstrap.sh:ro
+      - ../build/dev/postgres-init:/seed:ro
+
+  haproxy:
+    image: haproxy:3.2
+    container_name: highloadarchitect-haproxy
+    restart: unless-stopped
+    volumes:
+      - ../deployments/haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports:
+      - "5000:5000"
+      - "5001:5001"
+      - "8404:8404"
     networks:
       - highloadarchitect-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U social -d social"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-      start_period: 3m
     depends_on:
-      pgmaster:
-        condition: service_healthy
+      - patroni1
+      - patroni2
+      - patroni3
+
+  postgres-exporter1:
+    image: prometheuscommunity/postgres-exporter:v0.17.1
+    container_name: highloadarchitect-postgres-exporter1
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: "postgresql://social:social@patroni1:5432/social?sslmode=disable"
+    networks:
+      - highloadarchitect-network
+    depends_on:
+      - patroni1
+
+  postgres-exporter2:
+    image: prometheuscommunity/postgres-exporter:v0.17.1
+    container_name: highloadarchitect-postgres-exporter2
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: "postgresql://social:social@patroni2:5432/social?sslmode=disable"
+    networks:
+      - highloadarchitect-network
+    depends_on:
+      - patroni2
+
+  postgres-exporter3:
+    image: prometheuscommunity/postgres-exporter:v0.17.1
+    container_name: highloadarchitect-postgres-exporter3
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: "postgresql://social:social@patroni3:5432/social?sslmode=disable"
+    networks:
+      - highloadarchitect-network
+    depends_on:
+      - patroni3
 
   app:
     build:
@@ -100,16 +136,16 @@ services:
     restart: on-failure
     environment:
       CONFIG_PATH: /app/config/config.yaml
-      POSTGRES_HOST: pgmaster
+      POSTGRES_HOST: haproxy
+      POSTGRES_PORT: "5000"
       POSTGRES_PASSWORD: social
-      POSTGRES_READ_HOSTS: "pgslave:5432,pgasyncslave:5432"
+      POSTGRES_READ_HOSTS: "haproxy:5001"
     ports:
       - "8080:8080"
     networks:
       - highloadarchitect-network
     depends_on:
-      pgmaster:
-        condition: service_healthy
+      - haproxy
 
   prometheus:
     image: prom/prometheus:v3.15.1
@@ -174,7 +210,7 @@ networks:
     driver: bridge
 
 volumes:
-  postgres-data:
-  pgslave-data:
-  pgasyncslave-data:
+  patroni1-data:
+  patroni2-data:
+  patroni3-data:
   grafana-data:
