@@ -41,9 +41,68 @@ services:
       postgres:
         condition: service_healthy
 
+  prometheus:
+    image: prom/prometheus:v3.15.1
+    container_name: highloadarchitect-prometheus
+    restart: unless-stopped
+    volumes:
+      - ../deployments/prometheus:/etc/prometheus:ro
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+    ports:
+      - "9090:9090"
+    networks:
+      - highloadarchitect-network
+    depends_on:
+      - cadvisor
+      - node-exporter
+
+  node-exporter:
+    image: prom/node-exporter:v1.12.1
+    container_name: highloadarchitect-node-exporter
+    restart: unless-stopped
+    expose:
+      - "9100"
+    networks:
+      - highloadarchitect-network
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.55.1
+    container_name: highloadarchitect-cadvisor
+    restart: unless-stopped
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    expose:
+      - "8080"
+    networks:
+      - highloadarchitect-network
+
+  grafana:
+    image: grafana/grafana:13.3.0
+    container_name: highloadarchitect-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ../deployments/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../deployments/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    networks:
+      - highloadarchitect-network
+    depends_on:
+      - prometheus
+
 networks:
   highloadarchitect-network:
     driver: bridge
 
 volumes:
   postgres-data:
+  grafana-data:

@@ -18,6 +18,10 @@ docker-stop:
 docker-reset:
 	docker compose -f deployments/docker-compose.yaml down -v
 
+## metrics-reset: Очистить накопленные метрики (пересоздать Prometheus с пустым хранилищем)
+metrics-reset:
+	docker compose -f deployments/docker-compose.yaml up -d --force-recreate --renew-anon-volumes prometheus
+
 ## run-linters: Запустить линтеры
 run-linters:
 	@golangci-lint run -c ./golangci.yml
