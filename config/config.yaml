@@ -2,7 +2,7 @@ shutdown_timeout: "10s"
 
 http-server:
   port: "8080"
-  read_write_timeout: "3m"
+  read_write_timeout: "5m"
   idle_timeout: "1m"
   max_body_bytes: 65536
 

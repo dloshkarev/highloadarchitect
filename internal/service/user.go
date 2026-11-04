@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -30,6 +31,25 @@ type RegisterInput struct {
 	Biography  string
 	City       string
 	Password   string
+}
+
+// passwordHashCache кеширует хеши по паролю. Учебное упрощение: bcrypt — дорогая
+// CPU-операция, которая мешает тестировать запись в БД, а хеш самодостаточен
+// (соль зашита внутрь), поэтому одинаковый пароль может делить один хеш.
+var passwordHashCache sync.Map
+
+func hashPassword(password string) (string, error) {
+	if cached, ok := passwordHashCache.Load(password); ok {
+		return cached.(string), nil
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	passwordHashCache.Store(password, string(hash))
+
+	return string(hash), nil
 }
 
 type UserSearchFilter struct {
@@ -102,7 +122,7 @@ func newUser(input RegisterInput) (domain.User, string, error) {
 		return domain.User{}, "", validationError("дата рождения должна быть в формате ГГГГ-ММ-ДД")
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
+	hash, err := hashPassword(input.Password)
 	if err != nil {
 		return domain.User{}, "", fmt.Errorf("hash password: %w", err)
 	}

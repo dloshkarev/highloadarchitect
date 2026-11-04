@@ -25,6 +25,7 @@ erDiagram
 
 - Токен авторизации — случайный UUID без срока действия. После успешного входа предыдущие токены этого пользователя удаляются, остаётся один действующий токен.
 - Имя и фамилия не длиннее 100 символов, город не длиннее 100, биография не длиннее 2000. Пароль от 8 до 72 символов. Хеш bcrypt принимает не больше 72 байт, поэтому более длинная в байтах строка тоже отклоняется. Тело запроса не больше 64 КБ.
+- При регистрации все пользователи получают одинаковый пароль
 
 ## Интеграционные тесты
 
@@ -45,7 +46,8 @@ make docker-run
 С хоста доступны:
 
 - приложение — http://localhost:8080
-- PostgreSQL — `localhost:5432`, пользователь `social`, пароль `social`, база `social`
+- PostgreSQL через HAProxy: `localhost:5000` — запись (лидер), `localhost:5001` — чтение (реплики); пользователь `social`, пароль `social`, база `social`
+- узлы PostgreSQL напрямую (для отладки): `localhost:5433`–`5435` (`patroni1`–`patroni3`)
 
 Остановка:
 
@@ -82,7 +84,7 @@ make metrics-reset
 
 ## Кластер PostgreSQL (Patroni)
 
-Кластер под управлением Patroni: три узла `patroni1`–`patroni3` (образ `build/patroni.Dockerfile`, конфиг `deployments/patroni/patroni.yml`), состояние кластера — в `etcd`. Лидер и реплики выбираются Patroni автоматически, при первом старте лидер накатывает схему и наполнение через `deployments/patroni/post_bootstrap.sh`.
+Кластер под управлением Patroni: три узла `patroni1`–`patroni3` (образ `build/patroni.Dockerfile`, конфиг `deployments/patroni/patroni.yml`), состояние кластера — в `etcd`. Лидер и реплики выбираются Patroni автоматически, при первом старте лидер накатывает схему и наполнение через `deployments/patroni/post_bootstrap.sh`. Репликация кворумная синхронная (`synchronous_mode: quorum`, `synchronous_standby_names = ANY 1 (...)`): коммит ждёт подтверждения от одной из двух реплик. Управляется через REST API Patroni: `curl -X PATCH http://localhost:8008/config -H 'Content-Type: application/json' -d '{"synchronous_mode": "quorum"}'` (`false` — выключить).
 
 Перед кластером стоит HAProxy (`deployments/haproxy/haproxy.cfg`), роль узлов определяется по REST API Patroni:
 
@@ -92,10 +94,21 @@ make metrics-reset
 
 Приложение ходит только через HAProxy: write-пул на порт 5000, read-пул (поиск анкет) на 5001. Прямые порты узлов для отладки: `localhost:5433`–`5435` (пользователь `social`, пароль `social`, база `social`).
 
-Состояние кластера:
+Состав и состояние кластера (кто лидер, кто реплика, лаг):
 
 ```bash
 docker exec highloadarchitect-patroni1 gosu postgres patronictl -c /etc/patroni/patroni.yml list
+```
+
+То же самое через REST API Patroni с хоста — `/cluster` отдаёт состав всего кластера и доступен с любого живого узла, `/patroni` — подробное состояние конкретного узла:
+
+- patroni1 — http://localhost:8008/cluster
+- patroni2 — http://localhost:8009/cluster
+- patroni3 — http://localhost:8010/cluster
+
+```bash
+curl -s http://localhost:8009/cluster | python3 -m json.tool   # состав кластера
+curl -s http://localhost:8009/patroni  | python3 -m json.tool   # состояние узла patroni2
 ```
 
 Полный цикл поднятия с нуля — `make docker-fresh` (реплики клонируют лидер, занимает пару минут; приложение стартует, когда реплики встанут в строй).

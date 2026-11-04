@@ -18,12 +18,12 @@ docker-stop:
 docker-reset:
 	docker compose -f deployments/docker-compose.yaml down -v
 
+update-dashboard:
+	@python3 build/dev/update_pg_dashboard.py
+
 ## metrics-reset: Очистить накопленные метрики (пересоздать Prometheus с пустым хранилищем)
 metrics-reset:
 	docker compose -f deployments/docker-compose.yaml up -d --force-recreate --renew-anon-volumes prometheus
-
-## update-dashboard: Подставить актуальные ID pg-контейнеров в дашборд Grafana
-update-dashboard:
 	@python3 build/dev/update_pg_dashboard.py
 
 ## docker-fresh: Удалить контейнеры, тома и образ приложения, пересобрать и поднять всё с нуля

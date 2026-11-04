@@ -70,7 +70,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "rate(container_cpu_usage_seconds_total{id=\"/docker/4e758946aa1b8ef10e9d4327f515d35b7d0a393999dd91d6d2a4cec1cc481898\", cpu=\"total\"}[$__rate_interval]) * 100",
+          "expr": "rate(container_cpu_usage_seconds_total{id=\"/docker/49294a7e81faedf6b40c74ce8bd3d72dab0f1bf44ff26fc90a483f0c716660b6\", cpu=\"total\"}[$__rate_interval]) * 100",
           "legendFormat": "patroni1",
           "range": true
         },
@@ -80,7 +80,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "rate(container_cpu_usage_seconds_total{id=\"/docker/30fca9261405826c4d1ed4c3ef6f5b69021c85a95b0b3fbb8423c98dc0dd2354\", cpu=\"total\"}[$__rate_interval]) * 100",
+          "expr": "rate(container_cpu_usage_seconds_total{id=\"/docker/ce8c67c21b404356ca75f917f937b296e59dde0309d7065e0a5b7b345d3173b4\", cpu=\"total\"}[$__rate_interval]) * 100",
           "legendFormat": "patroni2",
           "range": true
         },
@@ -90,7 +90,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "rate(container_cpu_usage_seconds_total{id=\"/docker/2abb99a412d26b049ec164443f8b2b7d4e42a2feab1a16cd707759ba6bf47de4\", cpu=\"total\"}[$__rate_interval]) * 100",
+          "expr": "rate(container_cpu_usage_seconds_total{id=\"/docker/8a53a58aca3daf94ed2356395955749f9480a7f369c16983dd53b0d09311dc14\", cpu=\"total\"}[$__rate_interval]) * 100",
           "legendFormat": "patroni3",
           "range": true
         }

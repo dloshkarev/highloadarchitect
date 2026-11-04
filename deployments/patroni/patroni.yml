@@ -18,8 +18,9 @@ bootstrap:
     loop_wait: 10
     retry_timeout: 10
     maximum_lag_on_failover: 1048576
-    # Кворумную синхронную репликацию включаем позже отдельным шагом:
-    # synchronous_mode: quorum
+    # Кворумная синхронная репликация: коммит ждёт подтверждения от кворума реплик
+    # (ANY 1 из двух на кластере из трёх узлов).
+    #synchronous_mode: quorum
     postgresql:
       use_pg_rewind: true
       parameters:
