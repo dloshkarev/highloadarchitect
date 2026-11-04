@@ -1,9 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/csv"
-	"errors"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -25,11 +26,13 @@ import (
 // Дёргает выбранную ручку заданное число раз с заданным параллелизмом
 // и печатает отчёт: latency (минимум, максимум, среднее, медиана, p95, p99) и throughput.
 //
+// Режимы: read — сложное чтение (поиск анкет), write — запись (регистрация пользователей).
+//
 // Примеры:
 //
-//	go run ./cmd/loadgen -endpoint search -requests 1000 -concurrency 100
-//	go run ./cmd/loadgen -endpoint search -first-name Роберт -last-name Абрамов
-//	go run ./cmd/loadgen -endpoint get -user-id <uuid> -base-url http://127.0.0.1:8080
+//	go run ./cmd/loadgen -mode read -requests 1000 -concurrency 100
+//	go run ./cmd/loadgen -mode read -first-name Роберт -last-name Абрамов
+//	go run ./cmd/loadgen -mode write -requests 1000 -concurrency 10
 func main() {
 	if err := run(); err != nil {
 		slog.Error("loadgen stopped", "err", err)
@@ -39,13 +42,12 @@ func main() {
 
 type config struct {
 	baseURL     string
-	endpoint    string
+	mode        string
 	requests    int
 	concurrency int
 	timeout     time.Duration
 	firstName   string
 	lastName    string
-	userID      string
 }
 
 type requestSample struct {
@@ -75,7 +77,7 @@ func run() error {
 	}
 	defer client.CloseIdleConnections()
 
-	fmt.Printf("нагрузка: %s %s, запросов %d, параллелизм %d\n", cfg.endpoint, cfg.baseURL, cfg.requests, cfg.concurrency)
+	fmt.Printf("нагрузка: %s %s, запросов %d, параллелизм %d\n", cfg.mode, cfg.baseURL, cfg.requests, cfg.concurrency)
 
 	samples, elapsed := runLoad(ctx, client, cfg, newRequest)
 	if ctx.Err() != nil {
@@ -90,13 +92,12 @@ func run() error {
 func parseFlags() config {
 	cfg := config{}
 	flag.StringVar(&cfg.baseURL, "base-url", "http://localhost:8080", "базовый URL приложения")
-	flag.StringVar(&cfg.endpoint, "endpoint", "search", "тестируемая ручка: search | get")
+	flag.StringVar(&cfg.mode, "mode", "read", "режим нагрузки: read (поиск анкет) | write (регистрация)")
 	flag.IntVar(&cfg.requests, "requests", 100, "общее число запросов")
 	flag.IntVar(&cfg.concurrency, "concurrency", 10, "число одновременных запросов")
 	flag.DurationVar(&cfg.timeout, "timeout", 30*time.Second, "таймаут одного запроса")
-	flag.StringVar(&cfg.firstName, "first-name", "Роберт", "префикс имени для /user/search")
-	flag.StringVar(&cfg.lastName, "last-name", "Абрамов", "префикс фамилии для /user/search")
-	flag.StringVar(&cfg.userID, "user-id", "", "идентификатор пользователя для /user/get/:id")
+	flag.StringVar(&cfg.firstName, "first-name", "Роберт", "префикс имени для режима read")
+	flag.StringVar(&cfg.lastName, "last-name", "Абрамов", "префикс фамилии для режима read")
 	flag.Parse()
 
 	cfg.baseURL = strings.TrimRight(cfg.baseURL, "/")
@@ -104,10 +105,10 @@ func parseFlags() config {
 	return cfg
 }
 
-// makeRequestFactory возвращает функцию, строящую HTTP-запрос под выбранную ручку.
+// makeRequestFactory возвращает функцию, строящую HTTP-запрос под выбранный режим.
 func makeRequestFactory(cfg config) (func(ctx context.Context) (*http.Request, error), error) {
-	switch cfg.endpoint {
-	case "search":
+	switch cfg.mode {
+	case "read":
 		return func(ctx context.Context) (*http.Request, error) {
 			query := url.Values{}
 			query.Set("first_name", cfg.firstName)
@@ -115,16 +116,36 @@ func makeRequestFactory(cfg config) (func(ctx context.Context) (*http.Request, e
 
 			return http.NewRequestWithContext(ctx, http.MethodGet, cfg.baseURL+"/user/search?"+query.Encode(), nil)
 		}, nil
-	case "get":
-		if cfg.userID == "" {
-			return nil, errors.New("для endpoint=get нужно указать -user-id")
-		}
+	case "write":
+		// Каждый запрос регистрирует уникального пользователя; база счётчика от времени,
+		// чтобы повторные прогоны не пересекались с предыдущими.
+		var sequence atomic.Uint64
+		sequence.Add(uint64(time.Now().UnixMilli()))
 
 		return func(ctx context.Context) (*http.Request, error) {
-			return http.NewRequestWithContext(ctx, http.MethodGet, cfg.baseURL+"/user/get/"+cfg.userID, nil)
+			n := sequence.Add(1)
+			payload, err := json.Marshal(map[string]string{
+				"first_name":  "Нагруз",
+				"second_name": fmt.Sprintf("Тестовый%d", n),
+				"birthdate":   "2000-01-01",
+				"biography":   "создан loadgen",
+				"city":        "Москва",
+				"password":    "password1",
+			})
+			if err != nil {
+				return nil, fmt.Errorf("сериализовать анкету: %w", err)
+			}
+
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.baseURL+"/user/register", bytes.NewReader(payload))
+			if err != nil {
+				return nil, err
+			}
+			req.Header.Set("Content-Type", "application/json")
+
+			return req, nil
 		}, nil
 	default:
-		return nil, fmt.Errorf("неизвестная ручка %q: поддерживаются search, get", cfg.endpoint)
+		return nil, fmt.Errorf("неизвестный режим %q: поддерживаются read, write", cfg.mode)
 	}
 }
 

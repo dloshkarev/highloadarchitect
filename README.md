@@ -135,30 +135,29 @@ go build -o bin/loadgen ./cmd/loadgen
 Запуск (приложение должно быть запущено, например через `make docker-run`):
 
 ```bash
-./bin/loadgen -endpoint search -requests 1000 -concurrency 100
+./bin/loadgen -mode read -requests 1000 -concurrency 100
 ```
 
 Параметры:
 
-- `-endpoint` — тестируемая ручка: `search` (`/user/search`, по умолчанию) или `get` (`/user/get/:id`, требует `-user-id`).
+- `-mode` — режим нагрузки: `read` (поиск анкет `GET /user/search`, по умолчанию) или `write` (регистрация пользователей `POST /user/register`, каждый запрос создаёт уникального пользователя).
 - `-base-url` — базовый URL приложения, по умолчанию `http://localhost:8080`.
 - `-requests` — общее число запросов, по умолчанию 100.
 - `-concurrency` — число одновременных запросов, по умолчанию 10.
 - `-timeout` — таймаут одного запроса, по умолчанию 30s.
-- `-first-name`, `-last-name` — префиксы имени и фамилии для поиска, по умолчанию `Роберт` и `Абрамов`.
-- `-user-id` — идентификатор пользователя для `/user/get/:id`.
+- `-first-name`, `-last-name` — префиксы имени и фамилии для режима `read`, по умолчанию `Роберт` и `Абрамов`.
 
 Примеры:
 
 ```bash
-# поиск на 1, 10, 100 и 1000 одновременных запросов
-./bin/loadgen -endpoint search -requests 1 -concurrency 1
-./bin/loadgen -endpoint search -requests 1000 -concurrency 10
-./bin/loadgen -endpoint search -requests 10000 -concurrency 100
-./bin/loadgen -endpoint search -requests 100000 -concurrency 1000
+# чтение на 1, 10, 100 и 1000 одновременных запросов
+./bin/loadgen -mode read -requests 1 -concurrency 1
+./bin/loadgen -mode read -requests 1000 -concurrency 10
+./bin/loadgen -mode read -requests 10000 -concurrency 100
+./bin/loadgen -mode read -requests 100000 -concurrency 1000
 
-# чтение анкеты
-./bin/loadgen -endpoint get -user-id <uuid> -requests 1000 -concurrency 100
+# запись
+./bin/loadgen -mode write -requests 1000 -concurrency 10
 ```
 
 Остановка по Ctrl+C: инструмент дожидается завершения уже отправленных запросов и печатает отчёт по выполненным.
