@@ -1,0 +1,56 @@
+# Конфигурация Patroni, общая для всех узлов кластера.
+# Имя узла и адреса подставляются из переменных окружения (${PATRONI_NAME}).
+
+scope: highloadarchitect
+namespace: /db/
+# name и connect_address задаются per-node переменными окружения:
+# PATRONI_NAME, PATRONI_RESTAPI_CONNECT_ADDRESS, PATRONI_POSTGRESQL_CONNECT_ADDRESS.
+
+restapi:
+  listen: 0.0.0.0:8008
+
+etcd3:
+  host: etcd:2379
+
+bootstrap:
+  dcs:
+    ttl: 30
+    loop_wait: 10
+    retry_timeout: 10
+    maximum_lag_on_failover: 1048576
+    # Кворумная синхронная репликация: коммит ждёт подтверждения от кворума реплик
+    # (ANY 1 из двух на кластере из трёх узлов).
+    #synchronous_mode: quorum
+    postgresql:
+      use_pg_rewind: true
+      parameters:
+        wal_level: replica
+        wal_log_hints: on
+        max_wal_senders: 10
+        max_replication_slots: 10
+        wal_keep_size: 1024MB
+  initdb:
+    - encoding: UTF8
+    - data-checksums
+  pg_hba:
+    - local all all trust
+    - host all all 127.0.0.1/32 trust
+    - host all all ::1/128 trust
+    - host replication replicator samenet scram-sha-256
+    - host all all samenet scram-sha-256
+  post_bootstrap: /etc/patroni/post_bootstrap.sh
+
+postgresql:
+  listen: 0.0.0.0:5432
+  data_dir: /var/lib/postgresql/data
+  authentication:
+    superuser:
+      username: postgres
+      password: postgres
+    replication:
+      username: replicator
+      password: replicator
+
+tags:
+  nofailover: false
+  noloadbalance: false

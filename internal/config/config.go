@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/ilyakaznacheev/cleanenv"
@@ -27,6 +28,7 @@ var (
 	errInvalidMaxConnLifetime = errors.New("max conn lifetime must be positive")
 	errInvalidMaxConnIdleTime = errors.New("max conn idle time must be positive")
 	errInvalidMaxBodyBytes    = errors.New("max body bytes must be positive")
+	errInvalidReadHost        = errors.New("read host must be in host:port form")
 )
 
 type Config struct {
@@ -48,6 +50,7 @@ type PostgresConfig struct {
 	User            string        `yaml:"user" env:"POSTGRES_USER" env-required:"true"`
 	Password        string        `yaml:"password" env:"POSTGRES_PASSWORD" env-required:"true"`
 	Database        string        `yaml:"database" env:"POSTGRES_DB" env-required:"true"`
+	ReadHosts       string        `yaml:"read_hosts" env:"POSTGRES_READ_HOSTS"`
 	MaxConns        int32         `yaml:"max_conns" env:"POSTGRES_MAX_CONNS" env-required:"true"`
 	MaxConnLifetime time.Duration `yaml:"max_conn_lifetime" env:"POSTGRES_MAX_CONN_LIFETIME" env-required:"true"`
 	MaxConnIdleTime time.Duration `yaml:"max_conn_idle_time" env:"POSTGRES_MAX_CONN_IDLE_TIME" env-required:"true"`
@@ -127,8 +130,41 @@ func (c PostgresConfig) Validate() error {
 	if err := c.validateConnection(); err != nil {
 		return err
 	}
+	if _, err := c.ReadAddresses(); err != nil {
+		return err
+	}
 
 	return c.validatePool()
+}
+
+// ReadAddresses разбирает ReadHosts (адреса реплик через запятую, host:port).
+// Пустое значение означает, что чтение идёт на мастер.
+func (c PostgresConfig) ReadAddresses() ([]string, error) {
+	if strings.TrimSpace(c.ReadHosts) == "" {
+		return nil, nil
+	}
+
+	parts := strings.Split(c.ReadHosts, ",")
+	addresses := make([]string, 0, len(parts))
+	for _, part := range parts {
+		address := strings.TrimSpace(part)
+		host, port, err := net.SplitHostPort(address)
+		if err != nil || host == "" || port == "" {
+			return nil, fmt.Errorf("%w: %q", errInvalidReadHost, address)
+		}
+		addresses = append(addresses, address)
+	}
+
+	return addresses, nil
+}
+
+// WithAddress возвращает копию конфига, указывающую на другой host:port той же базы.
+func (c PostgresConfig) WithAddress(address string) PostgresConfig {
+	host, port, _ := net.SplitHostPort(address)
+	c.Host = host
+	c.Port = port
+
+	return c
 }
 
 func (c PostgresConfig) DSN() string {

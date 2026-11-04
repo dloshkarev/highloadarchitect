@@ -1,26 +1,131 @@
 version: "3.8"
 
+x-patroni-node: &patroni-node
+  build:
+    context: ..
+    dockerfile: build/patroni.Dockerfile
+  image: highloadarchitect-patroni:latest
+  entrypoint: ["/usr/local/bin/patroni-entrypoint.sh"]
+  command: ["/etc/patroni/patroni.yml"]
+  volumes:
+    - ../deployments/patroni/patroni.yml:/etc/patroni/patroni.yml:ro
+    - ../deployments/patroni/post_bootstrap.sh:/etc/patroni/post_bootstrap.sh:ro
+    - ../build/dev/postgres-init:/seed:ro
+  networks:
+    - highloadarchitect-network
+  depends_on:
+    - etcd
+
 services:
-  postgres:
-    image: postgres:18-alpine
-    container_name: highloadarchitect-postgres
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.21
+    container_name: highloadarchitect-etcd
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: social
-      POSTGRES_PASSWORD: social
-      POSTGRES_DB: social
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres-data:/var/lib/postgresql
-      - ../build/dev/postgres-init:/docker-entrypoint-initdb.d:ro
+      ETCD_LISTEN_CLIENT_URLS: "http://0.0.0.0:2379"
+      ETCD_ADVERTISE_CLIENT_URLS: "http://etcd:2379"
+    expose:
+      - "2379"
     networks:
       - highloadarchitect-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U social -d social"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-      start_period: 3m
+
+  patroni1:
+    <<: *patroni-node
+    container_name: highloadarchitect-patroni1
+    environment:
+      PATRONI_NAME: patroni1
+      PATRONI_RESTAPI_CONNECT_ADDRESS: patroni1:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: patroni1:5432
+    ports:
+      - "5433:5432"
+      - "8008:8008"
+    volumes:
+      - patroni1-data:/var/lib/postgresql/data
+      - ../deployments/patroni/patroni.yml:/etc/patroni/patroni.yml:ro
+      - ../deployments/patroni/post_bootstrap.sh:/etc/patroni/post_bootstrap.sh:ro
+      - ../build/dev/postgres-init:/seed:ro
+
+  patroni2:
+    <<: *patroni-node
+    container_name: highloadarchitect-patroni2
+    environment:
+      PATRONI_NAME: patroni2
+      PATRONI_RESTAPI_CONNECT_ADDRESS: patroni2:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: patroni2:5432
+    ports:
+      - "5434:5432"
+      - "8009:8008"
+    volumes:
+      - patroni2-data:/var/lib/postgresql/data
+      - ../deployments/patroni/patroni.yml:/etc/patroni/patroni.yml:ro
+      - ../deployments/patroni/post_bootstrap.sh:/etc/patroni/post_bootstrap.sh:ro
+      - ../build/dev/postgres-init:/seed:ro
+
+  patroni3:
+    <<: *patroni-node
+    container_name: highloadarchitect-patroni3
+    environment:
+      PATRONI_NAME: patroni3
+      PATRONI_RESTAPI_CONNECT_ADDRESS: patroni3:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: patroni3:5432
+    ports:
+      - "5435:5432"
+      - "8010:8008"
+    volumes:
+      - patroni3-data:/var/lib/postgresql/data
+      - ../deployments/patroni/patroni.yml:/etc/patroni/patroni.yml:ro
+      - ../deployments/patroni/post_bootstrap.sh:/etc/patroni/post_bootstrap.sh:ro
+      - ../build/dev/postgres-init:/seed:ro
+
+  haproxy:
+    image: haproxy:3.2
+    container_name: highloadarchitect-haproxy
+    restart: unless-stopped
+    volumes:
+      - ../deployments/haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports:
+      - "5000:5000"
+      - "5001:5001"
+      - "8404:8404"
+    networks:
+      - highloadarchitect-network
+    depends_on:
+      - patroni1
+      - patroni2
+      - patroni3
+
+  postgres-exporter1:
+    image: prometheuscommunity/postgres-exporter:v0.17.1
+    container_name: highloadarchitect-postgres-exporter1
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: "postgresql://social:social@patroni1:5432/social?sslmode=disable"
+    networks:
+      - highloadarchitect-network
+    depends_on:
+      - patroni1
+
+  postgres-exporter2:
+    image: prometheuscommunity/postgres-exporter:v0.17.1
+    container_name: highloadarchitect-postgres-exporter2
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: "postgresql://social:social@patroni2:5432/social?sslmode=disable"
+    networks:
+      - highloadarchitect-network
+    depends_on:
+      - patroni2
+
+  postgres-exporter3:
+    image: prometheuscommunity/postgres-exporter:v0.17.1
+    container_name: highloadarchitect-postgres-exporter3
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: "postgresql://social:social@patroni3:5432/social?sslmode=disable"
+    networks:
+      - highloadarchitect-network
+    depends_on:
+      - patroni3
 
   app:
     build:
@@ -31,19 +136,81 @@ services:
     restart: on-failure
     environment:
       CONFIG_PATH: /app/config/config.yaml
-      POSTGRES_HOST: postgres
+      POSTGRES_HOST: haproxy
+      POSTGRES_PORT: "5000"
       POSTGRES_PASSWORD: social
+      POSTGRES_READ_HOSTS: "haproxy:5001"
     ports:
       - "8080:8080"
     networks:
       - highloadarchitect-network
     depends_on:
-      postgres:
-        condition: service_healthy
+      - haproxy
+
+  prometheus:
+    image: prom/prometheus:v3.15.1
+    container_name: highloadarchitect-prometheus
+    restart: unless-stopped
+    volumes:
+      - ../deployments/prometheus:/etc/prometheus:ro
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+    ports:
+      - "9090:9090"
+    networks:
+      - highloadarchitect-network
+    depends_on:
+      - cadvisor
+      - node-exporter
+
+  node-exporter:
+    image: prom/node-exporter:v1.12.1
+    container_name: highloadarchitect-node-exporter
+    restart: unless-stopped
+    expose:
+      - "9100"
+    networks:
+      - highloadarchitect-network
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.55.1
+    container_name: highloadarchitect-cadvisor
+    restart: unless-stopped
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    expose:
+      - "8080"
+    networks:
+      - highloadarchitect-network
+
+  grafana:
+    image: grafana/grafana:13.3.0
+    container_name: highloadarchitect-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ../deployments/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../deployments/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    networks:
+      - highloadarchitect-network
+    depends_on:
+      - prometheus
 
 networks:
   highloadarchitect-network:
     driver: bridge
 
 volumes:
-  postgres-data:
+  patroni1-data:
+  patroni2-data:
+  patroni3-data:
+  grafana-data:
