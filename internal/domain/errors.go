@@ -11,16 +11,16 @@ type ValidationError struct {
 	message string
 }
 
+type DBError struct {
+	Err error
+}
+
 func NewValidationError(message string) error {
 	return &ValidationError{message: message}
 }
 
 func (e *ValidationError) Error() string {
 	return e.message
-}
-
-type DBError struct {
-	Err error
 }
 
 func (e *DBError) Error() string {

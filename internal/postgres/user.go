@@ -15,6 +15,11 @@ import (
 	"github.com/dloshkarev/highloadarchitect/internal/domain"
 )
 
+const (
+	retryDelay    = 100 * time.Millisecond
+	retryMaxDelay = 2 * time.Second
+)
+
 type UserRepository struct {
 	writePool *pgxpool.Pool
 	readPool  *ReadPool
@@ -49,15 +54,15 @@ func (r *UserRepository) Create(ctx context.Context, user domain.User, passwordH
 				user.City,
 				passwordHash,
 			)
-			if isDuplicateKey(err) {
+			if err == nil || isDuplicateKey(err) {
 				return nil
 			}
 
-			return err
+			return fmt.Errorf("insert user: %w", err)
 		},
 		retry.Attempts(0),
-		retry.Delay(100*time.Millisecond),
-		retry.MaxDelay(2*time.Second),
+		retry.Delay(retryDelay),
+		retry.MaxDelay(retryMaxDelay),
 		retry.DelayType(retry.BackOffDelay),
 		retry.LastErrorOnly(true),
 		retry.RetryIf(isTransientPGError),
