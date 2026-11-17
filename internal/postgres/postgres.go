@@ -2,9 +2,7 @@ package postgres
 
 import (
 	"context"
-	"embed"
 	"fmt"
-	"io/fs"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -12,10 +10,8 @@ import (
 	"github.com/pressly/goose/v3"
 
 	"github.com/dloshkarev/highloadarchitect/internal/config"
+	"github.com/dloshkarev/highloadarchitect/migrations"
 )
-
-//go:embed migrations/*.sql
-var migrationFS embed.FS
 
 const pingTimeout = 5 * time.Second
 
@@ -48,11 +44,7 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	sqlDB := stdlib.OpenDBFromPool(pool)
 	defer sqlDB.Close()
 
-	files, err := fs.Sub(migrationFS, "migrations")
-	if err != nil {
-		return fmt.Errorf("migrations fs: %w", err)
-	}
-	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, files)
+	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, migrations.FS)
 	if err != nil {
 		return fmt.Errorf("goose provider: %w", err)
 	}
