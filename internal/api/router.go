@@ -10,6 +10,8 @@ import (
 func NewRouter(users *service.UserService, auth *service.AuthService) *gin.Engine {
 	userHandler := &userHandler{users: users}
 	authHandler := &authHandler{auth: auth}
+	friendHandler := &friendHandler{}
+	postHandler := &postHandler{}
 
 	router := gin.New()
 	router.Use(gin.Logger(), recovery())
@@ -21,6 +23,17 @@ func NewRouter(users *service.UserService, auth *service.AuthService) *gin.Engin
 
 	// SEARCH
 	router.GET("/user/search", userHandler.search)
+
+	// FRIENDS
+	router.PUT("/friend/set/:user_id", friendHandler.set)
+	router.PUT("/friend/delete/:user_id", friendHandler.deleteFriend)
+
+	// POSTS
+	router.POST("/post/create", postHandler.create)
+	router.PUT("/post/update", postHandler.update)
+	router.PUT("/post/delete/:id", postHandler.deletePost)
+	router.GET("/post/get/:id", postHandler.get)
+	router.GET("/post/feed", postHandler.feed)
 
 	router.NoRoute(func(ctx *gin.Context) {
 		writeError(ctx, domain.ErrRouteNotFound)
