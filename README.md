@@ -3,6 +3,9 @@
 ```mermaid
 erDiagram
     users ||--o{ sessions : "user_id"
+    users ||--o{ posts : "author_id"
+    users ||--o{ friends : "user_id"
+    users ||--o{ friends : "friend_id"
     users {
         uuid id PK
         text first_name
@@ -17,9 +20,21 @@ erDiagram
         uuid user_id FK
         timestamptz created_at
     }
+    posts {
+        uuid id PK
+        uuid author_id FK
+        text body
+        timestamptz created_at
+    }
+    friends {
+        uuid user_id PK
+        uuid friend_id PK
+    }
 ```
 
 `sessions.user_id` ссылается на `users.id`. У пользователя может не быть сессий или быть несколько.
+
+`posts.author_id` ссылается на автора поста. `friends` хранит направленную связь: строка `(user_id, friend_id)` означает, что `user_id` добавил `friend_id` в друзья, но не наоборот.
 
 ## Допущения учебного проекта
 
@@ -84,7 +99,7 @@ make metrics-reset
 
 ## Кластер PostgreSQL (Patroni)
 
-Кластер под управлением Patroni: три узла `patroni1`–`patroni3` (образ `build/patroni.Dockerfile`, конфиг `deployments/patroni/patroni.yml`), состояние кластера — в `etcd`. Лидер и реплики выбираются Patroni автоматически, при первом старте лидер накатывает схему и наполнение через `deployments/patroni/post_bootstrap.sh`. Репликация кворумная синхронная (`synchronous_mode: quorum`, `synchronous_standby_names = ANY 1 (...)`): коммит ждёт подтверждения от одной из двух реплик. Управляется через REST API Patroni: `curl -X PATCH http://localhost:8008/config -H 'Content-Type: application/json' -d '{"synchronous_mode": "quorum"}'` (`false` — выключить).
+Кластер под управлением Patroni: три узла `patroni1`–`patroni3` (образ `build/patroni.Dockerfile`, конфиг `deployments/patroni/patroni.yml`), состояние кластера — в `etcd`. Лидер и реплики выбираются Patroni автоматически. При первом старте `deployments/patroni/post_bootstrap.sh` создаёт роль и базу приложения, а схему и тестовые данные накатывает приложение через goose-миграции. Репликация кворумная синхронная (`synchronous_mode: quorum`, `synchronous_standby_names = ANY 1 (...)`): коммит ждёт подтверждения от одной из двух реплик. Управляется через REST API Patroni: `curl -X PATCH http://localhost:8008/config -H 'Content-Type: application/json' -d '{"synchronous_mode": "quorum"}'` (`false` — выключить).
 
 Перед кластером стоит HAProxy (`deployments/haproxy/haproxy.cfg`), роль узлов определяется по REST API Patroni:
 

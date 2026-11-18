@@ -1,14 +1,13 @@
 -- +goose Up
--- IF NOT EXISTS нужен для docker-compose: build/dev/postgres-init создаёт users
--- до старта приложения. Вне compose этой таблицы ещё нет, и её создаёт миграция.
+-- Схема создаётся только миграциями; init-скриптов в build/dev больше нет.
 CREATE TABLE IF NOT EXISTS users (
-    id UUID PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     first_name TEXT NOT NULL,
     second_name TEXT NOT NULL,
     birthdate DATE NOT NULL,
     biography TEXT NOT NULL DEFAULT '',
     city TEXT NOT NULL DEFAULT '',
-    password_hash TEXT NOT NULL
+    password_hash TEXT NOT NULL DEFAULT '$2a$10$wPU0QusFYid9TqTV5jK21uwTOFHOc5iEvdUz7BGmZh6/Txl9aXsaq'
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
