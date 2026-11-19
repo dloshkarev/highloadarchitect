@@ -13,7 +13,11 @@ import (
 	"github.com/dloshkarev/highloadarchitect/internal/repository"
 )
 
-const maxPostTextLength = 2000
+const (
+	maxPostTextLength = 2000
+	defaultFeedLimit  = 10
+	maxFeedLimit      = 100
+)
 
 type PostService struct {
 	posts repository.PostRepository
@@ -79,6 +83,26 @@ func (s *PostService) Get(ctx context.Context, postID string) (domain.Post, erro
 	}
 
 	return post, nil
+}
+
+// Feed возвращает последние посты друзей пользователя, свежие сверху.
+// Нулевой limit заменяется значением по умолчанию, слишком большой
+// ограничивается maxFeedLimit, чтобы не выгружать всю ленту.
+func (s *PostService) Feed(ctx context.Context, userID string, limit int) ([]domain.Post, error) {
+	if err := validateUserID(userID); err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = defaultFeedLimit
+	}
+	limit = min(limit, maxFeedLimit)
+
+	posts, err := s.posts.Feed(ctx, userID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("load feed: %w", err)
+	}
+
+	return posts, nil
 }
 
 func normalizePostText(text string) (string, error) {

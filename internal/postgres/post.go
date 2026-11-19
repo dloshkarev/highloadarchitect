@@ -59,6 +59,37 @@ func (r *PostRepository) GetByID(ctx context.Context, postID string) (domain.Pos
 	return post, nil
 }
 
+// Feed возвращает последние посты друзей пользователя, свежие сверху.
+func (r *PostRepository) Feed(ctx context.Context, userID string, limit int) ([]domain.Post, error) {
+	const query = `
+		SELECT p.id, p.author_id, p.body, p.created_at
+		FROM posts AS p
+		JOIN friends AS f ON f.friend_id = p.author_id
+		WHERE f.user_id = $1
+		ORDER BY p.created_at DESC, p.id DESC
+		LIMIT $2
+	`
+	rows, err := r.pool.Query(ctx, query, userID, limit)
+	if err != nil {
+		return nil, dbErr("select feed", err)
+	}
+	defer rows.Close()
+
+	posts := make([]domain.Post, 0, limit)
+	for rows.Next() {
+		var post domain.Post
+		if err := rows.Scan(&post.ID, &post.AuthorID, &post.Text, &post.CreatedAt); err != nil {
+			return nil, dbErr("scan feed post", err)
+		}
+		posts = append(posts, post)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, dbErr("iterate feed", err)
+	}
+
+	return posts, nil
+}
+
 // UpdateText обновляет текст, только если пост принадлежит authorID.
 // Если запрос не затронул строк, уточняем причину: пост не найден или чужой.
 func (r *PostRepository) UpdateText(ctx context.Context, postID string, authorID string, text string) error {
