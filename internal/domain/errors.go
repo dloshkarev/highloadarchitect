@@ -4,7 +4,10 @@ import "errors"
 
 var (
 	ErrNotFound      = errors.New("пользователь не найден")
+	ErrPostNotFound  = errors.New("пост не найден")
 	ErrRouteNotFound = errors.New("маршрут не найден")
+	ErrUnauthorized  = errors.New("требуется авторизация")
+	ErrForbidden     = errors.New("нет прав на изменение поста")
 )
 
 type ValidationError struct {

@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/dloshkarev/highloadarchitect/internal/domain"
 	"github.com/dloshkarev/highloadarchitect/internal/repository"
 )
 
@@ -46,4 +47,22 @@ func (s *AuthService) Login(ctx context.Context, userID, password string) (strin
 	}
 
 	return token, nil
+}
+
+// UserIDByToken возвращает владельца действующей сессии. Неизвестный или
+// некорректный токен — domain.ErrUnauthorized.
+func (s *AuthService) UserIDByToken(ctx context.Context, token string) (string, error) {
+	if _, err := uuid.Parse(token); err != nil {
+		return "", domain.ErrUnauthorized
+	}
+
+	userID, err := s.sessions.GetUserID(ctx, token)
+	if errors.Is(err, domain.ErrNotFound) {
+		return "", domain.ErrUnauthorized
+	}
+	if err != nil {
+		return "", fmt.Errorf("load session: %w", err)
+	}
+
+	return userID, nil
 }

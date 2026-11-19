@@ -15,4 +15,17 @@ type UserRepository interface {
 
 type SessionRepository interface {
 	Create(ctx context.Context, token string, userID string) error
+	GetUserID(ctx context.Context, token string) (string, error)
+}
+
+type FriendRepository interface {
+	Add(ctx context.Context, userID string, friendID string) error
+	Delete(ctx context.Context, userID string, friendID string) error
+}
+
+type PostRepository interface {
+	Create(ctx context.Context, post domain.Post) error
+	GetByID(ctx context.Context, postID string) (domain.Post, error)
+	UpdateText(ctx context.Context, postID string, authorID string, text string) error
+	Delete(ctx context.Context, postID string, authorID string) error
 }

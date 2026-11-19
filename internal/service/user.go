@@ -64,8 +64,8 @@ func (s *UserService) Register(ctx context.Context, input RegisterInput) (string
 }
 
 func (s *UserService) Get(ctx context.Context, userID string) (domain.User, error) {
-	if _, err := uuid.Parse(userID); err != nil {
-		return domain.User{}, validationError("идентификатор пользователя должен быть UUID")
+	if err := validateUserID(userID); err != nil {
+		return domain.User{}, err
 	}
 
 	user, err := s.users.GetByID(ctx, userID)
@@ -180,4 +180,12 @@ func validatePassword(password string) error {
 
 func validationError(message string) error {
 	return fmt.Errorf("%w", domain.NewValidationError(message))
+}
+
+func validateUserID(userID string) error {
+	if _, err := uuid.Parse(userID); err != nil {
+		return validationError("идентификатор пользователя должен быть UUID")
+	}
+
+	return nil
 }

@@ -7,11 +7,16 @@ import (
 	"github.com/dloshkarev/highloadarchitect/internal/service"
 )
 
-func NewRouter(users *service.UserService, auth *service.AuthService) *gin.Engine {
+func NewRouter(
+	users *service.UserService,
+	auth *service.AuthService,
+	friends *service.FriendService,
+	posts *service.PostService,
+) *gin.Engine {
 	userHandler := &userHandler{users: users}
 	authHandler := &authHandler{auth: auth}
-	friendHandler := &friendHandler{}
-	postHandler := &postHandler{}
+	friendHandler := &friendHandler{friends: friends}
+	postHandler := &postHandler{posts: posts}
 
 	router := gin.New()
 	router.Use(gin.Logger(), recovery())
@@ -24,16 +29,19 @@ func NewRouter(users *service.UserService, auth *service.AuthService) *gin.Engin
 	// SEARCH
 	router.GET("/user/search", userHandler.search)
 
+	// Дальше все ручки работают от имени текущего пользователя.
+	authorized := router.Group("", authRequired(auth))
+
 	// FRIENDS
-	router.PUT("/friend/set/:user_id", friendHandler.set)
-	router.PUT("/friend/delete/:user_id", friendHandler.deleteFriend)
+	authorized.PUT("/friend/set/:user_id", friendHandler.set)
+	authorized.PUT("/friend/delete/:user_id", friendHandler.deleteFriend)
 
 	// POSTS
-	router.POST("/post/create", postHandler.create)
-	router.PUT("/post/update", postHandler.update)
-	router.PUT("/post/delete/:id", postHandler.deletePost)
-	router.GET("/post/get/:id", postHandler.get)
-	router.GET("/post/feed", postHandler.feed)
+	authorized.POST("/post/create", postHandler.create)
+	authorized.PUT("/post/update", postHandler.update)
+	authorized.PUT("/post/delete/:id", postHandler.deletePost)
+	authorized.GET("/post/get/:id", postHandler.get)
+	authorized.GET("/post/feed", postHandler.feed)
 
 	router.NoRoute(func(ctx *gin.Context) {
 		writeError(ctx, domain.ErrRouteNotFound)

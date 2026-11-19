@@ -35,9 +35,13 @@ func Run(ctx context.Context, cfg config.Config) error {
 
 	users := postgres.NewUserRepository(writePool, readPool)
 	sessions := postgres.NewSessionRepository(writePool)
+	friends := postgres.NewFriendRepository(writePool)
+	posts := postgres.NewPostRepository(writePool)
 	router := api.NewRouter(
 		service.NewUserService(users),
 		service.NewAuthService(users, sessions),
+		service.NewFriendService(friends),
+		service.NewPostService(posts),
 	)
 
 	addr := ":" + cfg.HTTPServer.Port

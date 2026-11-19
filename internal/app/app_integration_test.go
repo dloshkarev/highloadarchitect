@@ -405,7 +405,9 @@ func appConfig(ctx context.Context, container *postgres.PostgresContainer) (conf
 }
 
 func waitHTTP(url string) error {
-	deadline := time.Now().Add(30 * time.Second)
+	// Миграции с тестовыми данными (пользователи, посты, друзья) накатываются
+	// при старте приложения и занимают несколько минут, поэтому ждём с запасом.
+	deadline := time.Now().Add(6 * time.Minute)
 	probe := url + "/user/get/" + uuid.NewString()
 	client := &http.Client{Timeout: time.Second}
 	for time.Now().Before(deadline) {
