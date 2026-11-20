@@ -1,4 +1,4 @@
-package feed
+package redis
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/redis/go-redis/v9"
+	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/dloshkarev/highloadarchitect/internal/config"
 	"github.com/dloshkarev/highloadarchitect/internal/domain"
@@ -19,7 +19,7 @@ const tombstoneValue = "__deleted__"
 var (
 	errUnexpectedPostValue = errors.New("unexpected post value type")
 
-	updatePostScript = redis.NewScript(`
+	updatePostScript = goredis.NewScript(`
 local value = redis.call('GET', KEYS[1])
 if value == '__deleted__' then
     return 0
@@ -28,7 +28,7 @@ redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
 return 1
 `)
 
-	fanoutScript = redis.NewScript(`
+	fanoutScript = goredis.NewScript(`
 local unpack = unpack or table.unpack
 if redis.call('EXISTS', KEYS[1]) == 0 then
     return 0
@@ -48,14 +48,24 @@ type FanoutItem struct {
 
 // Cache инкапсулирует операции с Redis, относящиеся к лентам и телам постов.
 type Cache struct {
-	rdb *redis.Client
+	rdb *goredis.Client
 	cfg config.FeedConfig
+}
+
+// FeedKey возвращает ключ Redis Sorted Set с идентификаторами постов ленты.
+func FeedKey(userID string) string {
+	return "feed:" + userID
+}
+
+// PostKey возвращает ключ Redis с JSON-телом поста.
+func PostKey(postID string) string {
+	return "post:" + postID
 }
 
 // Open создаёт Redis-клиент, проверяет соединение и возвращает кэш.
 // При недоступном Redis приложение должно упасть на старте (fail fast).
 func Open(ctx context.Context, redisCfg config.RedisConfig, feedCfg config.FeedConfig) (*Cache, error) {
-	rdb := redis.NewClient(&redis.Options{
+	rdb := goredis.NewClient(&goredis.Options{
 		Addr:         redisCfg.Addr,
 		Password:     redisCfg.Password,
 		DB:           redisCfg.DB,
@@ -75,7 +85,7 @@ func Open(ctx context.Context, redisCfg config.RedisConfig, feedCfg config.FeedC
 }
 
 // NewCache создаёт кэш поверх готового клиента.
-func NewCache(rdb *redis.Client, cfg config.FeedConfig) *Cache {
+func NewCache(rdb *goredis.Client, cfg config.FeedConfig) *Cache {
 	return &Cache{rdb: rdb, cfg: cfg}
 }
 
@@ -113,7 +123,7 @@ func (c *Cache) Range(ctx context.Context, userID string, offset int, limit int)
 		return nil, nil
 	}
 
-	ids, err := c.rdb.ZRangeArgs(ctx, redis.ZRangeArgs{
+	ids, err := c.rdb.ZRangeArgs(ctx, goredis.ZRangeArgs{
 		Key:   FeedKey(userID),
 		Start: int64(offset),
 		Stop:  int64(offset + limit - 1),
@@ -126,7 +136,7 @@ func (c *Cache) Range(ctx context.Context, userID string, offset int, limit int)
 	return ids, nil
 }
 
-// Warm наполняет кэш ленты постами из БД и выставляет TTL.
+// Warm наполняет кэш ленты постами и выставляет TTL.
 // Пустой список ничего не создаёт: Redis не хранит пустые sorted set.
 func (c *Cache) Warm(ctx context.Context, userID string, posts []domain.Post) error {
 	if len(posts) == 0 {
@@ -134,9 +144,9 @@ func (c *Cache) Warm(ctx context.Context, userID string, posts []domain.Post) er
 	}
 
 	key := FeedKey(userID)
-	members := make([]redis.Z, 0, len(posts))
+	members := make([]goredis.Z, 0, len(posts))
 	for _, post := range posts {
-		members = append(members, redis.Z{
+		members = append(members, goredis.Z{
 			Score:  float64(post.CreatedAt.UnixMicro()),
 			Member: post.ID,
 		})
@@ -219,11 +229,11 @@ func (c *Cache) PutPostIfAbsent(ctx context.Context, post domain.Post) error {
 		return fmt.Errorf("encode post %s: %w", post.ID, err)
 	}
 
-	err = c.rdb.SetArgs(ctx, PostKey(post.ID), body, redis.SetArgs{
+	err = c.rdb.SetArgs(ctx, PostKey(post.ID), body, goredis.SetArgs{
 		Mode: "NX",
 		TTL:  c.cfg.PostTTL,
 	}).Err()
-	if err != nil && !errors.Is(err, redis.Nil) {
+	if err != nil && !errors.Is(err, goredis.Nil) {
 		return fmt.Errorf("set post %s: %w", post.ID, err)
 	}
 

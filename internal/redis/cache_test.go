@@ -1,4 +1,4 @@
-package feed
+package redis
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
+	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/dloshkarev/highloadarchitect/internal/config"
 	"github.com/dloshkarev/highloadarchitect/internal/domain"
@@ -27,7 +27,7 @@ func newTestCache(t *testing.T, cfg config.FeedConfig) (*Cache, *miniredis.Minir
 	t.Helper()
 
 	mr := miniredis.RunT(t)
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	rdb := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() {
 		_ = rdb.Close()
 	})
