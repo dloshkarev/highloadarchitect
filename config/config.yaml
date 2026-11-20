@@ -15,3 +15,31 @@ postgres:
   max_conns: 10
   max_conn_lifetime: "30m"
   max_conn_idle_time: "5m"
+
+feed:
+  enabled: true
+  cache_limit: 1000
+  warm_limit: 1000
+  ttl: "24h"
+  post_ttl: "72h"
+  empty_marker_ttl: "24h"
+
+redis:
+  addr: "localhost:6379"
+  password: ""
+  db: 0
+  dial_timeout: "1s"
+  read_timeout: "500ms"
+  write_timeout: "500ms"
+  pool_size: 10
+
+kafka:
+  brokers: "localhost:9092"
+  topic: "post-events"
+  group_id: "feed-fanout"
+  batch_size: 500
+  batch_timeout: "1s"
+
+outbox:
+  poll_interval: "1s"
+  batch_size: 100

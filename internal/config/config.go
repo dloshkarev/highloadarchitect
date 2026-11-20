@@ -29,11 +29,35 @@ var (
 	errInvalidMaxConnIdleTime = errors.New("max conn idle time must be positive")
 	errInvalidMaxBodyBytes    = errors.New("max body bytes must be positive")
 	errInvalidReadHost        = errors.New("read host must be in host:port form")
+
+	errInvalidFeedCacheLimit = errors.New("feed cache limit must be positive")
+	errInvalidFeedWarmLimit  = errors.New("feed warm limit must be positive")
+	errInvalidFeedTTL        = errors.New("feed ttl must be positive")
+	errInvalidFeedPostTTL    = errors.New("feed post ttl must be positive")
+	errInvalidFeedMarkerTTL  = errors.New("feed empty marker ttl must be positive")
+
+	errEmptyRedisAddr       = errors.New("redis addr is empty")
+	errInvalidRedisTimeout  = errors.New("redis timeout must be positive")
+	errInvalidRedisPoolSize = errors.New("redis pool size must be positive")
+
+	errEmptyKafkaBrokers     = errors.New("kafka brokers is empty")
+	errEmptyKafkaBroker      = errors.New("kafka broker is empty")
+	errEmptyKafkaTopic       = errors.New("kafka topic is empty")
+	errEmptyKafkaGroupID     = errors.New("kafka group id is empty")
+	errInvalidKafkaBatchSize = errors.New("kafka batch size must be positive")
+	errInvalidKafkaBatchWait = errors.New("kafka batch timeout must be positive")
+
+	errInvalidOutboxPollInterval = errors.New("outbox poll interval must be positive")
+	errInvalidOutboxBatchSize    = errors.New("outbox batch size must be positive")
 )
 
 type Config struct {
 	HTTPServer      HTTPServerConfig `yaml:"http-server"`
 	Postgres        PostgresConfig   `yaml:"postgres"`
+	Feed            FeedConfig       `yaml:"feed"`
+	Redis           RedisConfig      `yaml:"redis"`
+	Kafka           KafkaConfig      `yaml:"kafka"`
+	Outbox          OutboxConfig     `yaml:"outbox"`
 	ShutdownTimeout time.Duration    `yaml:"shutdown_timeout" env:"SHUTDOWN_TIMEOUT" env-required:"true"`
 }
 
@@ -54,6 +78,38 @@ type PostgresConfig struct {
 	MaxConns        int32         `yaml:"max_conns" env:"POSTGRES_MAX_CONNS" env-required:"true"`
 	MaxConnLifetime time.Duration `yaml:"max_conn_lifetime" env:"POSTGRES_MAX_CONN_LIFETIME" env-required:"true"`
 	MaxConnIdleTime time.Duration `yaml:"max_conn_idle_time" env:"POSTGRES_MAX_CONN_IDLE_TIME" env-required:"true"`
+}
+
+type FeedConfig struct {
+	Enabled        bool          `yaml:"enabled" env:"FEED_ENABLED"`
+	CacheLimit     int           `yaml:"cache_limit" env:"FEED_CACHE_LIMIT" env-required:"true"`
+	WarmLimit      int           `yaml:"warm_limit" env:"FEED_WARM_LIMIT" env-required:"true"`
+	TTL            time.Duration `yaml:"ttl" env:"FEED_TTL" env-required:"true"`
+	PostTTL        time.Duration `yaml:"post_ttl" env:"FEED_POST_TTL" env-required:"true"`
+	EmptyMarkerTTL time.Duration `yaml:"empty_marker_ttl" env:"FEED_EMPTY_MARKER_TTL" env-required:"true"`
+}
+
+type RedisConfig struct {
+	Addr         string        `yaml:"addr" env:"REDIS_ADDR" env-required:"true"`
+	Password     string        `yaml:"password" env:"REDIS_PASSWORD"`
+	DB           int           `yaml:"db" env:"REDIS_DB"`
+	DialTimeout  time.Duration `yaml:"dial_timeout" env:"REDIS_DIAL_TIMEOUT" env-required:"true"`
+	ReadTimeout  time.Duration `yaml:"read_timeout" env:"REDIS_READ_TIMEOUT" env-required:"true"`
+	WriteTimeout time.Duration `yaml:"write_timeout" env:"REDIS_WRITE_TIMEOUT" env-required:"true"`
+	PoolSize     int           `yaml:"pool_size" env:"REDIS_POOL_SIZE" env-required:"true"`
+}
+
+type KafkaConfig struct {
+	Brokers      string        `yaml:"brokers" env:"KAFKA_BROKERS" env-required:"true"`
+	Topic        string        `yaml:"topic" env:"KAFKA_TOPIC" env-required:"true"`
+	GroupID      string        `yaml:"group_id" env:"KAFKA_GROUP_ID" env-required:"true"`
+	BatchSize    int           `yaml:"batch_size" env:"KAFKA_BATCH_SIZE" env-required:"true"`
+	BatchTimeout time.Duration `yaml:"batch_timeout" env:"KAFKA_BATCH_TIMEOUT" env-required:"true"`
+}
+
+type OutboxConfig struct {
+	PollInterval time.Duration `yaml:"poll_interval" env:"OUTBOX_POLL_INTERVAL" env-required:"true"`
+	BatchSize    int           `yaml:"batch_size" env:"OUTBOX_BATCH_SIZE" env-required:"true"`
 }
 
 func Load() (Config, error) {
@@ -101,6 +157,18 @@ func (c Config) Validate() error {
 	}
 	if err := c.Postgres.Validate(); err != nil {
 		return fmt.Errorf("postgres: %w", err)
+	}
+	if err := c.Feed.Validate(); err != nil {
+		return fmt.Errorf("feed: %w", err)
+	}
+	if err := c.Redis.Validate(); err != nil {
+		return fmt.Errorf("redis: %w", err)
+	}
+	if err := c.Kafka.Validate(); err != nil {
+		return fmt.Errorf("kafka: %w", err)
+	}
+	if err := c.Outbox.Validate(); err != nil {
+		return fmt.Errorf("outbox: %w", err)
 	}
 	if c.ShutdownTimeout <= 0 {
 		return errInvalidShutdownTimeout
@@ -180,6 +248,85 @@ func (c PostgresConfig) DSN() string {
 	postgresURL.RawQuery = query.Encode()
 
 	return postgresURL.String()
+}
+
+func (c FeedConfig) Validate() error {
+	switch {
+	case c.CacheLimit <= 0:
+		return errInvalidFeedCacheLimit
+	case c.WarmLimit <= 0:
+		return errInvalidFeedWarmLimit
+	case c.TTL <= 0:
+		return errInvalidFeedTTL
+	case c.PostTTL <= 0:
+		return errInvalidFeedPostTTL
+	case c.EmptyMarkerTTL <= 0:
+		return errInvalidFeedMarkerTTL
+	default:
+		return nil
+	}
+}
+
+func (c RedisConfig) Validate() error {
+	switch {
+	case c.Addr == "":
+		return errEmptyRedisAddr
+	case c.DialTimeout <= 0, c.ReadTimeout <= 0, c.WriteTimeout <= 0:
+		return errInvalidRedisTimeout
+	case c.PoolSize <= 0:
+		return errInvalidRedisPoolSize
+	default:
+		return nil
+	}
+}
+
+func (c KafkaConfig) Validate() error {
+	if _, err := c.BrokersList(); err != nil {
+		return err
+	}
+
+	switch {
+	case c.Topic == "":
+		return errEmptyKafkaTopic
+	case c.GroupID == "":
+		return errEmptyKafkaGroupID
+	case c.BatchSize <= 0:
+		return errInvalidKafkaBatchSize
+	case c.BatchTimeout <= 0:
+		return errInvalidKafkaBatchWait
+	default:
+		return nil
+	}
+}
+
+// BrokersList разбирает Brokers (адреса через запятую).
+func (c KafkaConfig) BrokersList() ([]string, error) {
+	if strings.TrimSpace(c.Brokers) == "" {
+		return nil, errEmptyKafkaBrokers
+	}
+
+	parts := strings.Split(c.Brokers, ",")
+	brokers := make([]string, 0, len(parts))
+	for _, part := range parts {
+		broker := strings.TrimSpace(part)
+		if broker == "" {
+			return nil, fmt.Errorf("%w: %q", errEmptyKafkaBroker, c.Brokers)
+		}
+		brokers = append(brokers, broker)
+	}
+
+	return brokers, nil
+}
+
+func (c OutboxConfig) Validate() error {
+	switch {
+	case c.PollInterval <= 0:
+		return errInvalidOutboxPollInterval
+	case c.BatchSize <= 0:
+		return errInvalidOutboxBatchSize
+	default:
+		return nil
+	}
 }
 
 func (c PostgresConfig) validateConnection() error {

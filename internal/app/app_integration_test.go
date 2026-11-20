@@ -393,6 +393,32 @@ func appConfig(ctx context.Context, container *postgres.PostgresContainer) (conf
 			MaxConnLifetime: time.Minute,
 			MaxConnIdleTime: time.Minute,
 		},
+		Feed: config.FeedConfig{
+			Enabled:        false,
+			CacheLimit:     1000,
+			WarmLimit:      1000,
+			TTL:            24 * time.Hour,
+			PostTTL:        72 * time.Hour,
+			EmptyMarkerTTL: 24 * time.Hour,
+		},
+		Redis: config.RedisConfig{
+			Addr:         "localhost:6379",
+			DialTimeout:  time.Second,
+			ReadTimeout:  time.Second,
+			WriteTimeout: time.Second,
+			PoolSize:     1,
+		},
+		Kafka: config.KafkaConfig{
+			Brokers:      "localhost:9092",
+			Topic:        "post-events",
+			GroupID:      "feed-fanout-test",
+			BatchSize:    100,
+			BatchTimeout: time.Second,
+		},
+		Outbox: config.OutboxConfig{
+			PollInterval: time.Second,
+			BatchSize:    100,
+		},
 	}
 	if err := cfg.Validate(); err != nil {
 		return config.Config{}, err
