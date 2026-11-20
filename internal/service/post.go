@@ -85,19 +85,29 @@ func (s *PostService) Get(ctx context.Context, postID string) (domain.Post, erro
 	return post, nil
 }
 
-// Feed возвращает последние посты друзей пользователя, свежие сверху.
-// Нулевой limit заменяется значением по умолчанию, слишком большой
-// ограничивается maxFeedLimit, чтобы не выгружать всю ленту.
-func (s *PostService) Feed(ctx context.Context, userID string, limit int) ([]domain.Post, error) {
+// Feed возвращает диапазон постов друзей пользователя [offset, offset+limit),
+// свежие сверху. Отрицательные offset и limit отклоняются, нулевой limit
+// заменяется значением по умолчанию, слишком большой ограничивается
+// maxFeedLimit, чтобы не выгружать всю ленту.
+func (s *PostService) Feed(ctx context.Context, userID string, offset int, limit int) ([]domain.Post, error) {
 	if err := validateUserID(userID); err != nil {
 		return nil, err
 	}
-	if limit <= 0 {
+
+	if offset < 0 {
+		return nil, validationError("offset не может быть отрицательным")
+	}
+
+	if limit < 0 {
+		return nil, validationError("limit не может быть отрицательным")
+	}
+
+	if limit == 0 {
 		limit = defaultFeedLimit
 	}
 	limit = min(limit, maxFeedLimit)
 
-	posts, err := s.posts.Feed(ctx, userID, limit)
+	posts, err := s.posts.Feed(ctx, userID, offset, limit)
 	if err != nil {
 		return nil, fmt.Errorf("load feed: %w", err)
 	}

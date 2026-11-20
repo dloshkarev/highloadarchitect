@@ -1,7 +1,9 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 
@@ -86,9 +88,54 @@ func (h *postHandler) get(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, makePostResponse(post))
 }
 
-// feed возвращает ленту постов друзей. Заглушка: логика появится позже.
-func (*postHandler) feed(ctx *gin.Context) {
-	ctx.JSON(http.StatusOK, []postResponse{})
+// feed возвращает диапазон ленты постов друзей: offset задаёт начало выдачи,
+// limit — максимальное количество постов на странице.
+func (h *postHandler) feed(ctx *gin.Context) {
+	offset, err := queryInt(ctx, "offset", 0)
+	if err != nil {
+		writeError(ctx, err)
+
+		return
+	}
+	limit, err := queryInt(ctx, "limit", 0)
+	if err != nil {
+		writeError(ctx, err)
+
+		return
+	}
+
+	posts, err := h.posts.Feed(ctx.Request.Context(), currentUserID(ctx), offset, limit)
+	if err != nil {
+		writeError(ctx, err)
+
+		return
+	}
+	ctx.JSON(http.StatusOK, makePostFeedResponse(posts))
+}
+
+// queryInt читает необязательный целочисленный query-параметр.
+// Пустое значение заменяется defaultValue.
+func queryInt(ctx *gin.Context, name string, defaultValue int) (int, error) {
+	raw := ctx.Query(name)
+	if raw == "" {
+		return defaultValue, nil
+	}
+
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%w", domain.NewValidationError(fmt.Sprintf("параметр %s должен быть целым числом", name)))
+	}
+
+	return value, nil
+}
+
+func makePostFeedResponse(posts []domain.Post) []postResponse {
+	response := make([]postResponse, len(posts))
+	for i, post := range posts {
+		response[i] = makePostResponse(post)
+	}
+
+	return response
 }
 
 func makePostResponse(post domain.Post) postResponse {

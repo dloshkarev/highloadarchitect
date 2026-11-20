@@ -59,8 +59,10 @@ func (r *PostRepository) GetByID(ctx context.Context, postID string) (domain.Pos
 	return post, nil
 }
 
-// Feed возвращает последние посты друзей пользователя, свежие сверху.
-func (r *PostRepository) Feed(ctx context.Context, userID string, limit int) ([]domain.Post, error) {
+// Feed возвращает диапазон постов друзей пользователя [offset, offset+limit),
+// свежие сверху. Сортировка детерминирована (created_at, id), поэтому соседние
+// страницы не пересекаются и не теряют посты.
+func (r *PostRepository) Feed(ctx context.Context, userID string, offset int, limit int) ([]domain.Post, error) {
 	const query = `
 		SELECT p.id, p.author_id, p.body, p.created_at
 		FROM posts AS p
@@ -68,8 +70,9 @@ func (r *PostRepository) Feed(ctx context.Context, userID string, limit int) ([]
 		WHERE f.user_id = $1
 		ORDER BY p.created_at DESC, p.id DESC
 		LIMIT $2
+		OFFSET $3
 	`
-	rows, err := r.pool.Query(ctx, query, userID, limit)
+	rows, err := r.pool.Query(ctx, query, userID, limit, offset)
 	if err != nil {
 		return nil, dbErr("select feed", err)
 	}
