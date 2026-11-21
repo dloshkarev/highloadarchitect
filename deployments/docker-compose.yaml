@@ -123,6 +123,54 @@ services:
     depends_on:
       - patroni3
 
+  redis:
+    image: redis:7-alpine
+    container_name: highloadarchitect-redis
+    restart: unless-stopped
+    # Персистентность не нужна: кэш лент прогревается из БД и переживает рестарт.
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "512mb", "--maxmemory-policy", "volatile-ttl"]
+    ports:
+      - "6379:6379"
+    networks:
+      - highloadarchitect-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  kafka:
+    image: apache/kafka:3.9.2
+    container_name: highloadarchitect-kafka
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      # PLAINTEXT — для сервисов внутри compose-сети, HOST — для запуска
+      # приложения на хосте (advertised-адрес хостового листенера резолвится
+      # только с хоста, поэтому 9092 наружу не мапится).
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,HOST://:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,HOST://localhost:29092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    ports:
+      - "29092:29092"
+    networks:
+      - highloadarchitect-network
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+
   app:
     build:
       context: ..
@@ -143,7 +191,12 @@ services:
     networks:
       - highloadarchitect-network
     depends_on:
-      - haproxy
+      haproxy:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
 
   prometheus:
     image: prom/prometheus:v3.15.1

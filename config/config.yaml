@@ -34,7 +34,10 @@ redis:
   pool_size: 10
 
 kafka:
-  brokers: "localhost:9092"
+  # 29092 — хостовый листенинг Kafka из docker-compose: advertised-адрес
+  # резолвится с хоста. Контейнеры в compose-сети используют kafka:9092
+  # через переменную KAFKA_BROKERS.
+  brokers: "localhost:29092"
   topic: "post-events"
   group_id: "feed-fanout"
   batch_size: 500
