@@ -59,6 +59,39 @@ func (r *PostRepository) GetByID(ctx context.Context, postID string) (domain.Pos
 	return post, nil
 }
 
+// GetByIDs возвращает посты по идентификаторам. Отсутствующие в БД
+// идентификаторы просто не попадают в результат.
+func (r *PostRepository) GetByIDs(ctx context.Context, ids []string) ([]domain.Post, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	const query = `
+		SELECT id, author_id, body, created_at
+		FROM posts
+		WHERE id = ANY($1::uuid[])
+	`
+	rows, err := r.pool.Query(ctx, query, ids)
+	if err != nil {
+		return nil, dbErr("select posts by ids", err)
+	}
+	defer rows.Close()
+
+	posts := make([]domain.Post, 0, len(ids))
+	for rows.Next() {
+		var post domain.Post
+		if err := rows.Scan(&post.ID, &post.AuthorID, &post.Text, &post.CreatedAt); err != nil {
+			return nil, dbErr("scan post by id", err)
+		}
+		posts = append(posts, post)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, dbErr("iterate posts by ids", err)
+	}
+
+	return posts, nil
+}
+
 // Feed возвращает диапазон постов друзей пользователя [offset, offset+limit),
 // свежие сверху. Сортировка детерминирована (created_at, id), поэтому соседние
 // страницы не пересекаются и не теряют посты.

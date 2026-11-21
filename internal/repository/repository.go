@@ -26,6 +26,7 @@ type FriendRepository interface {
 type PostRepository interface {
 	Create(ctx context.Context, post domain.Post) error
 	GetByID(ctx context.Context, postID string) (domain.Post, error)
+	GetByIDs(ctx context.Context, ids []string) ([]domain.Post, error)
 	Feed(ctx context.Context, userID string, offset int, limit int) ([]domain.Post, error)
 	UpdateText(ctx context.Context, postID string, authorID string, text string) error
 	Delete(ctx context.Context, postID string, authorID string) error
