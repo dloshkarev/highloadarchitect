@@ -19,12 +19,19 @@ const (
 	maxFeedLimit      = 100
 )
 
-type PostService struct {
-	posts repository.PostRepository
+// FeedService — чтение ленты с кэшем. Может быть nil, тогда используются
+// только БД-запросы.
+type FeedService interface {
+	Feed(ctx context.Context, userID string, offset int, limit int) ([]domain.Post, error)
 }
 
-func NewPostService(posts repository.PostRepository) *PostService {
-	return &PostService{posts: posts}
+type PostService struct {
+	posts repository.PostRepository
+	feed  FeedService
+}
+
+func NewPostService(posts repository.PostRepository, feed FeedService) *PostService {
+	return &PostService{posts: posts, feed: feed}
 }
 
 func (s *PostService) Create(ctx context.Context, authorID string, text string) (string, error) {
@@ -106,6 +113,15 @@ func (s *PostService) Feed(ctx context.Context, userID string, offset int, limit
 		limit = defaultFeedLimit
 	}
 	limit = min(limit, maxFeedLimit)
+
+	if s.feed != nil {
+		posts, err := s.feed.Feed(ctx, userID, offset, limit)
+		if err != nil {
+			return nil, fmt.Errorf("load feed: %w", err)
+		}
+
+		return posts, nil
+	}
 
 	posts, err := s.posts.Feed(ctx, userID, offset, limit)
 	if err != nil {

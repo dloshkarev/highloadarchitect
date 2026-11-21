@@ -28,15 +28,25 @@ func testFeedConfig() config.FeedConfig {
 func newTestService(t *testing.T, source PostSource) (*Service, *rediscache.Cache) {
 	t.Helper()
 
+	return newTestServiceWithConfig(t, source, testFeedConfig())
+}
+
+func newTestServiceWithConfig(
+	t *testing.T,
+	source PostSource,
+	cfg config.FeedConfig,
+) (*Service, *rediscache.Cache) {
+	t.Helper()
+
 	mr := miniredis.RunT(t)
 	rdb := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() {
 		_ = rdb.Close()
 	})
 
-	cache := rediscache.NewCache(rdb, testFeedConfig())
+	cache := rediscache.NewCache(rdb, cfg)
 
-	return New(cache, source), cache
+	return New(cache, source, cfg), cache
 }
 
 func testPost(id string) domain.Post {
@@ -48,11 +58,29 @@ func testPost(id string) domain.Post {
 	}
 }
 
+type feedCall struct {
+	userID string
+	offset int
+	limit  int
+}
+
 type fakePostSource struct {
-	posts   map[string]domain.Post
-	err     error
-	reverse bool
-	calls   [][]string
+	posts     map[string]domain.Post
+	feedPosts []domain.Post
+	feedErr   error
+	err       error
+	reverse   bool
+	calls     [][]string
+	feedCalls []feedCall
+}
+
+func (f *fakePostSource) Feed(_ context.Context, userID string, offset int, limit int) ([]domain.Post, error) {
+	f.feedCalls = append(f.feedCalls, feedCall{userID: userID, offset: offset, limit: limit})
+	if f.feedErr != nil {
+		return nil, f.feedErr
+	}
+
+	return f.feedPosts, nil
 }
 
 func (f *fakePostSource) GetByIDs(_ context.Context, ids []string) ([]domain.Post, error) {
@@ -191,6 +219,170 @@ func TestLoadPostsEmpty(t *testing.T) {
 	}
 	if len(posts) != 0 {
 		t.Fatalf("loadPosts() = %v, want empty", posts)
+	}
+}
+
+func seedCache(t *testing.T, cache *rediscache.Cache, userID string, posts []domain.Post) {
+	t.Helper()
+
+	ctx := context.Background()
+	if err := cache.Warm(ctx, userID, posts); err != nil {
+		t.Fatalf("Warm() error = %v", err)
+	}
+	for _, post := range posts {
+		if err := cache.PutPostIfAbsent(ctx, post); err != nil {
+			t.Fatalf("PutPostIfAbsent() error = %v", err)
+		}
+	}
+}
+
+func TestFeedDisabledUsesDB(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	posts := []domain.Post{testPost("second"), testPost("first")}
+	cfg := testFeedConfig()
+	cfg.Enabled = false
+	source := &fakePostSource{feedPosts: posts}
+	service, cache := newTestServiceWithConfig(t, source, cfg)
+
+	got, err := service.Feed(ctx, "user-1", 0, 2)
+	if err != nil {
+		t.Fatalf("Feed() error = %v", err)
+	}
+	assertPostIDs(t, got, []string{"second", "first"})
+
+	if len(source.feedCalls) != 1 {
+		t.Fatalf("Feed() calls = %d, want 1", len(source.feedCalls))
+	}
+	card, err := cache.Card(ctx, "user-1")
+	if err != nil {
+		t.Fatalf("Card() error = %v", err)
+	}
+	if card != 0 {
+		t.Fatalf("Card() = %d, want 0", card)
+	}
+}
+
+func TestFeedWarmsEmptyCache(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	first := testPost("first")
+	second := testPost("second")
+	source := &fakePostSource{
+		feedPosts: []domain.Post{second, first},
+		posts:     map[string]domain.Post{first.ID: first, second.ID: second},
+	}
+	service, cache := newTestService(t, source)
+
+	got, err := service.Feed(ctx, "user-1", 0, 2)
+	if err != nil {
+		t.Fatalf("Feed() error = %v", err)
+	}
+	assertPostIDs(t, got, []string{second.ID, first.ID})
+
+	if len(source.feedCalls) != 1 {
+		t.Fatalf("Feed() calls = %d, want 1", len(source.feedCalls))
+	}
+	if call := source.feedCalls[0]; call.offset != 0 || call.limit != testFeedConfig().WarmLimit {
+		t.Fatalf("warm Feed(%d, %d), want (0, %d)", call.offset, call.limit, testFeedConfig().WarmLimit)
+	}
+	if len(source.calls) != 1 {
+		t.Fatalf("GetByIDs() calls = %d, want 1", len(source.calls))
+	}
+
+	card, err := cache.Card(ctx, "user-1")
+	if err != nil {
+		t.Fatalf("Card() error = %v", err)
+	}
+	if card != 2 {
+		t.Fatalf("Card() = %d, want 2", card)
+	}
+}
+
+func TestFeedCacheHit(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	first := testPost("first")
+	second := testPost("second")
+	third := testPost("third")
+	service, cache := newTestService(t, &fakePostSource{})
+	seedCache(t, cache, "user-1", []domain.Post{first, second, third})
+
+	got, err := service.Feed(ctx, "user-1", 1, 2)
+	if err != nil {
+		t.Fatalf("Feed() error = %v", err)
+	}
+	assertPostIDs(t, got, []string{second.ID, first.ID})
+}
+
+func TestFeedRangeBeyondCacheUsesDB(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	first := testPost("first")
+	second := testPost("second")
+	fromDB := []domain.Post{testPost("db-3"), testPost("db-2")}
+	source := &fakePostSource{feedPosts: fromDB}
+	service, cache := newTestService(t, source)
+	seedCache(t, cache, "user-1", []domain.Post{first, second})
+
+	got, err := service.Feed(ctx, "user-1", 1, 5)
+	if err != nil {
+		t.Fatalf("Feed() error = %v", err)
+	}
+	assertPostIDs(t, got, []string{"db-3", "db-2"})
+
+	if len(source.feedCalls) != 1 {
+		t.Fatalf("Feed() calls = %d, want 1", len(source.feedCalls))
+	}
+	if call := source.feedCalls[0]; call.offset != 1 || call.limit != 5 {
+		t.Fatalf("Feed(%d, %d), want (1, 5)", call.offset, call.limit)
+	}
+	if len(source.calls) != 0 {
+		t.Fatalf("GetByIDs() calls = %d, want 0", len(source.calls))
+	}
+}
+
+func TestFeedEmptyDB(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	source := &fakePostSource{}
+	service, cache := newTestService(t, source)
+
+	got, err := service.Feed(ctx, "user-1", 0, 10)
+	if err != nil {
+		t.Fatalf("Feed() error = %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("Feed() = %v, want empty", got)
+	}
+	if len(source.feedCalls) != 1 {
+		t.Fatalf("Feed() calls = %d, want 1", len(source.feedCalls))
+	}
+	card, err := cache.Card(ctx, "user-1")
+	if err != nil {
+		t.Fatalf("Card() error = %v", err)
+	}
+	if card != 0 {
+		t.Fatalf("Card() = %d, want 0", card)
+	}
+}
+
+func TestFeedWarmError(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	errDB := errors.New("db is down")
+	source := &fakePostSource{feedErr: errDB}
+	service, _ := newTestService(t, source)
+
+	_, err := service.Feed(ctx, "user-1", 0, 10)
+	if !errors.Is(err, errDB) {
+		t.Fatalf("Feed() error = %v, want %v", err, errDB)
 	}
 }
 

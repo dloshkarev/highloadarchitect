@@ -41,7 +41,8 @@ func Run(ctx context.Context, cfg config.Config) error {
 		service.NewUserService(users),
 		service.NewAuthService(users, sessions),
 		service.NewFriendService(friends),
-		service.NewPostService(posts),
+		// Кэш ленты подключается на шаге 9 (wiring Redis и фоновых процессов).
+		service.NewPostService(posts, nil),
 	)
 
 	addr := ":" + cfg.HTTPServer.Port
