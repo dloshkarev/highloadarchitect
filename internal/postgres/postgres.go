@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"embed"
 	"fmt"
 	"io/fs"
 	"time"
@@ -12,10 +11,8 @@ import (
 	"github.com/pressly/goose/v3"
 
 	"github.com/dloshkarev/highloadarchitect/internal/config"
+	"github.com/dloshkarev/highloadarchitect/migrations"
 )
-
-//go:embed migrations/*.sql
-var migrationFS embed.FS
 
 const pingTimeout = 5 * time.Second
 
@@ -44,15 +41,23 @@ func NewPool(ctx context.Context, postgresConfig config.PostgresConfig) (*pgxpoo
 	return pool, nil
 }
 
-func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
+// Migrate применяет миграции из embed. При seed=false пропускаются затравочные
+// миграции (*_data.sql): таблицы создаются пустыми. Полный запуск приложения
+// мигрирует всё, интеграционные тесты стартуют со схемой без данных.
+func Migrate(ctx context.Context, pool *pgxpool.Pool, seed bool) error {
 	sqlDB := stdlib.OpenDBFromPool(pool)
 	defer sqlDB.Close()
 
-	files, err := fs.Sub(migrationFS, "migrations")
-	if err != nil {
-		return fmt.Errorf("migrations fs: %w", err)
+	source := fs.FS(migrations.FS)
+	if !seed {
+		schemaOnly, err := migrations.SchemaOnly()
+		if err != nil {
+			return fmt.Errorf("schema migrations: %w", err)
+		}
+		source = schemaOnly
 	}
-	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, files)
+
+	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, source)
 	if err != nil {
 		return fmt.Errorf("goose provider: %w", err)
 	}

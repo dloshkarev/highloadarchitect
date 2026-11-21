@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -13,7 +14,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,6 +22,49 @@ import (
 	"syscall"
 	"time"
 )
+
+const (
+	defaultRequests    = 100
+	defaultConcurrency = 10
+	defaultTimeout     = 30 * time.Second
+	maxIdleConns       = 512
+	shownFailures      = 3
+	medianPercentile   = 0.50
+	p95Percentile      = 0.95
+	p99Percentile      = 0.99
+)
+
+var errUnknownMode = errors.New("неизвестный режим, поддерживаются read и write")
+
+type config struct {
+	baseURL     string
+	mode        string
+	requests    int
+	concurrency int
+	timeout     time.Duration
+	firstName   string
+	lastName    string
+}
+
+type requestSample struct {
+	latency time.Duration
+	status  int
+	err     error
+}
+
+type loadReport struct {
+	total      int
+	succeeded  int
+	latencyMin time.Duration
+	latencyMax time.Duration
+	latencyAvg time.Duration
+	latencyMed time.Duration
+	latencyP95 time.Duration
+	latencyP99 time.Duration
+	throughput float64
+}
+
+type requestFactory func(ctx context.Context) (*http.Request, error)
 
 // Консольный инструмент нагрузочного тестирования уже запущенного приложения.
 // Дёргает выбранную ручку заданное число раз с заданным параллелизмом
@@ -40,22 +84,6 @@ func main() {
 	}
 }
 
-type config struct {
-	baseURL     string
-	mode        string
-	requests    int
-	concurrency int
-	timeout     time.Duration
-	firstName   string
-	lastName    string
-}
-
-type requestSample struct {
-	latency time.Duration
-	status  int
-	err     error
-}
-
 func run() error {
 	cfg := parseFlags()
 
@@ -70,18 +98,24 @@ func run() error {
 	client := &http.Client{
 		Timeout: cfg.timeout,
 		Transport: &http.Transport{
-			MaxIdleConns:        max(cfg.concurrency, 512),
-			MaxIdleConnsPerHost: max(cfg.concurrency, 512),
+			MaxIdleConns:        max(cfg.concurrency, maxIdleConns),
+			MaxIdleConnsPerHost: max(cfg.concurrency, maxIdleConns),
 			IdleConnTimeout:     time.Minute,
 		},
 	}
 	defer client.CloseIdleConnections()
 
-	fmt.Printf("нагрузка: %s %s, запросов %d, параллелизм %d\n", cfg.mode, cfg.baseURL, cfg.requests, cfg.concurrency)
+	printOutf(
+		"нагрузка: %s %s, запросов %d, параллелизм %d\n",
+		cfg.mode,
+		cfg.baseURL,
+		cfg.requests,
+		cfg.concurrency,
+	)
 
 	samples, elapsed := runLoad(ctx, client, cfg, newRequest)
 	if ctx.Err() != nil {
-		fmt.Println("прервано пользователем, отчёт по выполненным запросам")
+		printOutf("прервано пользователем, отчёт по выполненным запросам\n")
 	}
 
 	printReport(samples, elapsed)
@@ -93,9 +127,9 @@ func parseFlags() config {
 	cfg := config{}
 	flag.StringVar(&cfg.baseURL, "base-url", "http://localhost:8080", "базовый URL приложения")
 	flag.StringVar(&cfg.mode, "mode", "read", "режим нагрузки: read (поиск анкет) | write (регистрация)")
-	flag.IntVar(&cfg.requests, "requests", 100, "общее число запросов")
-	flag.IntVar(&cfg.concurrency, "concurrency", 10, "число одновременных запросов")
-	flag.DurationVar(&cfg.timeout, "timeout", 30*time.Second, "таймаут одного запроса")
+	flag.IntVar(&cfg.requests, "requests", defaultRequests, "общее число запросов")
+	flag.IntVar(&cfg.concurrency, "concurrency", defaultConcurrency, "число одновременных запросов")
+	flag.DurationVar(&cfg.timeout, "timeout", defaultTimeout, "таймаут одного запроса")
 	flag.StringVar(&cfg.firstName, "first-name", "Роберт", "префикс имени для режима read")
 	flag.StringVar(&cfg.lastName, "last-name", "Абрамов", "префикс фамилии для режима read")
 	flag.Parse()
@@ -106,7 +140,7 @@ func parseFlags() config {
 }
 
 // makeRequestFactory возвращает функцию, строящую HTTP-запрос под выбранный режим.
-func makeRequestFactory(cfg config) (func(ctx context.Context) (*http.Request, error), error) {
+func makeRequestFactory(cfg config) (requestFactory, error) {
 	switch cfg.mode {
 	case "read":
 		return func(ctx context.Context) (*http.Request, error) {
@@ -136,23 +170,33 @@ func makeRequestFactory(cfg config) (func(ctx context.Context) (*http.Request, e
 				return nil, fmt.Errorf("сериализовать анкету: %w", err)
 			}
 
-			req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.baseURL+"/user/register", bytes.NewReader(payload))
+			req, err := http.NewRequestWithContext(
+				ctx,
+				http.MethodPost,
+				cfg.baseURL+"/user/register",
+				bytes.NewReader(payload),
+			)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("создать запрос регистрации: %w", err)
 			}
 			req.Header.Set("Content-Type", "application/json")
 
 			return req, nil
 		}, nil
 	default:
-		return nil, fmt.Errorf("неизвестный режим %q: поддерживаются read, write", cfg.mode)
+		return nil, fmt.Errorf("%w: %q", errUnknownMode, cfg.mode)
 	}
 }
 
 // runLoad выполняет cfg.requests запросов пулом из cfg.concurrency воркеров.
 // Каждые progressStep запросов печатает прогресс в лог.
 // Возвращает семплы выполненных запросов и время от старта до завершения последнего.
-func runLoad(ctx context.Context, client *http.Client, cfg config, newRequest func(ctx context.Context) (*http.Request, error)) ([]requestSample, time.Duration) {
+func runLoad(
+	ctx context.Context,
+	client *http.Client,
+	cfg config,
+	newRequest requestFactory,
+) ([]requestSample, time.Duration) {
 	const progressStep = 10000
 
 	jobs := make(chan struct{})
@@ -174,8 +218,13 @@ func runLoad(ctx context.Context, client *http.Client, cfg config, newRequest fu
 
 				if done := completed.Add(1); done%progressStep == 0 || done == int64(cfg.requests) {
 					elapsed := time.Since(started)
-					fmt.Printf("прогресс: %d/%d запросов за %s (%.0f req/s)\n",
-						done, cfg.requests, elapsed.Round(time.Millisecond), float64(done)/elapsed.Seconds())
+					printOutf(
+						"прогресс: %d/%d запросов за %s (%.0f req/s)\n",
+						done,
+						cfg.requests,
+						elapsed.Round(time.Millisecond),
+						float64(done)/elapsed.Seconds(),
+					)
 				}
 			}
 		}()
@@ -200,7 +249,11 @@ scheduled:
 	return samples, elapsed
 }
 
-func doRequest(ctx context.Context, client *http.Client, newRequest func(ctx context.Context) (*http.Request, error)) requestSample {
+func doRequest(
+	ctx context.Context,
+	client *http.Client,
+	newRequest requestFactory,
+) requestSample {
 	req, err := newRequest(ctx)
 	if err != nil {
 		return requestSample{err: fmt.Errorf("создать запрос: %w", err)}
@@ -225,18 +278,6 @@ func doRequest(ctx context.Context, client *http.Client, newRequest func(ctx con
 	return requestSample{latency: latency, status: resp.StatusCode}
 }
 
-type loadReport struct {
-	total      int
-	succeeded  int
-	latencyMin time.Duration
-	latencyMax time.Duration
-	latencyAvg time.Duration
-	latencyMed time.Duration
-	latencyP95 time.Duration
-	latencyP99 time.Duration
-	throughput float64
-}
-
 func printReport(samples []requestSample, elapsed time.Duration) {
 	report := summarizeLoad(samples, elapsed)
 
@@ -245,19 +286,25 @@ func printReport(samples []requestSample, elapsed time.Duration) {
 	for _, sample := range samples {
 		if sample.err != nil {
 			failures = append(failures, sample.err)
+
 			continue
 		}
 		statuses[sample.status]++
 	}
 
-	fmt.Printf("\nзапросов выполнено: %d, успешно (2xx): %d, ошибок: %d\n", report.total, report.succeeded, len(failures))
+	printOutf(
+		"\nзапросов выполнено: %d, успешно (2xx): %d, ошибок: %d\n",
+		report.total,
+		report.succeeded,
+		len(failures),
+	)
 	if len(statuses) > 0 {
 		parts := make([]string, 0, len(statuses))
 		for status, count := range statuses {
 			parts = append(parts, fmt.Sprintf("%d: %d", status, count))
 		}
-		sort.Strings(parts)
-		fmt.Printf("статусы: %s\n", strings.Join(parts, ", "))
+		slices.Sort(parts)
+		printOutf("статусы: %s\n", strings.Join(parts, ", "))
 	}
 
 	var builder strings.Builder
@@ -281,14 +328,14 @@ func printReport(samples []requestSample, elapsed time.Duration) {
 		strconv.FormatFloat(report.throughput, 'f', 2, 64),
 	})
 	writer.Flush()
-	fmt.Println(builder.String())
+	printOutf("%s\n", builder.String())
 
 	if len(failures) > 0 {
 		shown := failures
-		if len(shown) > 3 {
-			shown = shown[:3]
+		if len(shown) > shownFailures {
+			shown = shown[:shownFailures]
 		}
-		fmt.Printf("первые ошибки: %v\n", shown)
+		printOutf("первые ошибки: %v\n", shown)
 	}
 }
 
@@ -308,15 +355,15 @@ func summarizeLoad(samples []requestSample, elapsed time.Duration) loadReport {
 		return report
 	}
 
-	sort.Slice(latencies, func(i, j int) bool { return latencies[i] < latencies[j] })
+	slices.Sort(latencies)
 
 	report.succeeded = len(latencies)
 	report.latencyMin = latencies[0]
 	report.latencyMax = latencies[len(latencies)-1]
 	report.latencyAvg = latencySum / time.Duration(len(latencies))
-	report.latencyMed = percentile(latencies, 0.50)
-	report.latencyP95 = percentile(latencies, 0.95)
-	report.latencyP99 = percentile(latencies, 0.99)
+	report.latencyMed = percentile(latencies, medianPercentile)
+	report.latencyP95 = percentile(latencies, p95Percentile)
+	report.latencyP99 = percentile(latencies, p99Percentile)
 	report.throughput = float64(len(latencies)) / elapsed.Seconds()
 
 	return report
@@ -331,4 +378,8 @@ func percentile(sorted []time.Duration, p float64) time.Duration {
 
 func formatLatency(value time.Duration) string {
 	return strconv.FormatFloat(float64(value)/float64(time.Millisecond), 'f', 3, 64)
+}
+
+func printOutf(format string, args ...any) {
+	_, _ = fmt.Fprintf(os.Stdout, format, args...)
 }

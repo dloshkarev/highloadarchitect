@@ -2,10 +2,13 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/dloshkarev/highloadarchitect/internal/domain"
 )
 
 type SessionRepository struct {
@@ -41,4 +44,23 @@ func (r *SessionRepository) Create(ctx context.Context, token string, userID str
 	}
 
 	return nil
+}
+
+// GetUserID возвращает владельца токена. Неизвестный токен — domain.ErrNotFound.
+func (r *SessionRepository) GetUserID(ctx context.Context, token string) (string, error) {
+	const query = `
+		SELECT user_id
+		FROM sessions
+		WHERE token = $1
+	`
+	var userID string
+	err := r.pool.QueryRow(ctx, query, token).Scan(&userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", domain.ErrNotFound
+	}
+	if err != nil {
+		return "", dbErr("select session", err)
+	}
+
+	return userID, nil
 }

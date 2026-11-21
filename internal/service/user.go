@@ -24,6 +24,11 @@ const (
 	bcryptMaxPasswordBytes = 72
 )
 
+// passwordHashCache кеширует хеши по паролю. Учебное упрощение: bcrypt — дорогая
+// CPU-операция, которая мешает тестировать запись в БД, а хеш самодостаточен
+// (соль зашита внутрь), поэтому одинаковый пароль может делить один хеш.
+var passwordHashCache sync.Map
+
 type RegisterInput struct {
 	FirstName  string
 	SecondName string
@@ -31,25 +36,6 @@ type RegisterInput struct {
 	Biography  string
 	City       string
 	Password   string
-}
-
-// passwordHashCache кеширует хеши по паролю. Учебное упрощение: bcrypt — дорогая
-// CPU-операция, которая мешает тестировать запись в БД, а хеш самодостаточен
-// (соль зашита внутрь), поэтому одинаковый пароль может делить один хеш.
-var passwordHashCache sync.Map
-
-func hashPassword(password string) (string, error) {
-	if cached, ok := passwordHashCache.Load(password); ok {
-		return cached.(string), nil
-	}
-
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		return "", err
-	}
-	passwordHashCache.Store(password, string(hash))
-
-	return string(hash), nil
 }
 
 type UserSearchFilter struct {
@@ -78,8 +64,8 @@ func (s *UserService) Register(ctx context.Context, input RegisterInput) (string
 }
 
 func (s *UserService) Get(ctx context.Context, userID string) (domain.User, error) {
-	if _, err := uuid.Parse(userID); err != nil {
-		return domain.User{}, validationError("идентификатор пользователя должен быть UUID")
+	if err := validateUserID(userID); err != nil {
+		return domain.User{}, err
 	}
 
 	user, err := s.users.GetByID(ctx, userID)
@@ -108,6 +94,20 @@ func (s *UserService) Search(ctx context.Context, filter UserSearchFilter) ([]do
 	return users, nil
 }
 
+func hashPassword(password string) (string, error) {
+	if cached, ok := passwordHashCache.Load(password); ok {
+		return cached.(string), nil
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", fmt.Errorf("generate password hash: %w", err)
+	}
+	passwordHashCache.Store(password, string(hash))
+
+	return string(hash), nil
+}
+
 func newUser(input RegisterInput) (domain.User, string, error) {
 	input.FirstName = strings.TrimSpace(input.FirstName)
 	input.SecondName = strings.TrimSpace(input.SecondName)
@@ -134,7 +134,7 @@ func newUser(input RegisterInput) (domain.User, string, error) {
 		Birthdate:  birthdate,
 		Biography:  input.Biography,
 		City:       input.City,
-	}, string(hash), nil
+	}, hash, nil
 }
 
 func validateRegisterInput(input RegisterInput) error {
@@ -180,4 +180,12 @@ func validatePassword(password string) error {
 
 func validationError(message string) error {
 	return fmt.Errorf("%w", domain.NewValidationError(message))
+}
+
+func validateUserID(userID string) error {
+	if _, err := uuid.Parse(userID); err != nil {
+		return validationError("идентификатор пользователя должен быть UUID")
+	}
+
+	return nil
 }

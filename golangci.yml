@@ -16,7 +16,6 @@ linters:
     - containedctx
     - contextcheck
     - copyloopvar
-    - cyclop
     - decorder
     - depguard
     - dogsled
@@ -104,7 +103,6 @@ linters:
     - unused
     - usestdlibvars
     - usetesting
-    - varnamelen
     - wastedassign
     - whitespace
     - wrapcheck
@@ -114,6 +112,9 @@ linters:
 
   # Disable specific linters.
   disable:
+    - gomodguard
+    - cyclop
+    - varnamelen
     - arangolint
     - depguard
     - dogsled
@@ -132,10 +133,20 @@ linters:
     - gochecknoglobals
     - recvcheck
 
-    # All available settings of specific linters.
   settings:
-    # See the dedicated "linters.settings" documentation section.
-    option: value
+    # Порядок объявлений: типы до функций, конструктор до методов структуры.
+    funcorder:
+      constructor: true
+    decorder:
+      dec-order:
+        - const
+        - var
+        - type
+        - func
+      disable-dec-order-check: false
+      disable-type-dec-order-check: false
+      disable-func-dec-order-check: false
+
   # Defines a set of rules to ignore issues.
   # It does not skip the analysis, and so does not ignore "typecheck" errors.
   exclusions:
@@ -160,15 +171,6 @@ linters:
       - std-error-handling
       - common-false-positives
       - legacy
-    # Excluding configuration per-path, per-linter, per-text and per-source.
-    rules:
-      # Exclude some linters from running on tests files.
-      - path: _test\.go
-        linters:
-          - gocyclo
-          - errcheck
-          - dupl
-          - gosec
 
 formatters:
   # Enable specific formatter.
@@ -176,10 +178,6 @@ formatters:
   enable:
     - gofmt
     - goimports
-  # Formatters settings.
-  settings:
-    # See the dedicated "formatters.settings" documentation section.
-    option: value
   exclusions:
     # Log a warning if an exclusion path is unused.
     # Default: false
@@ -195,12 +193,6 @@ formatters:
     #
     # Default: lax
     generated: strict
-    # Which file paths to exclude.
-    # This option is ignored when using `--stdin` as the path is unknown.
-    # Default: []
-    paths:
-      - ".*\\.my\\.go$"
-      - lib/bad.go
 
 # Options for analysis running.
 run:
@@ -223,10 +215,6 @@ run:
   # Include test files or not.
   # Default: true
   tests: false
-  # List of build tags, all linters use it.
-  # Default: []
-  build-tags:
-    - mytag
   # If set, we pass it to "go list -mod={option}". From "go help modules":
   # If invoked with -mod=readonly, the go command is disallowed from the implicit
   # automatic updating of go.mod described above. Instead, it fails when any changes

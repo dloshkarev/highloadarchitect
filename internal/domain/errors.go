@@ -4,11 +4,18 @@ import "errors"
 
 var (
 	ErrNotFound      = errors.New("пользователь не найден")
+	ErrPostNotFound  = errors.New("пост не найден")
 	ErrRouteNotFound = errors.New("маршрут не найден")
+	ErrUnauthorized  = errors.New("требуется авторизация")
+	ErrForbidden     = errors.New("нет прав на изменение поста")
 )
 
 type ValidationError struct {
 	message string
+}
+
+type DBError struct {
+	Err error
 }
 
 func NewValidationError(message string) error {
@@ -17,10 +24,6 @@ func NewValidationError(message string) error {
 
 func (e *ValidationError) Error() string {
 	return e.message
-}
-
-type DBError struct {
-	Err error
 }
 
 func (e *DBError) Error() string {

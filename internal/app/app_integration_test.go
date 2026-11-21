@@ -23,7 +23,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/modules/kafka"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
+	"github.com/testcontainers/testcontainers-go/modules/redis"
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/dloshkarev/highloadarchitect/internal/app"
@@ -37,9 +39,12 @@ const (
 )
 
 var (
-	baseURL     string
-	postgresDSN string
-	httpClient  = &http.Client{Timeout: 10 * time.Second}
+	baseURL      string
+	postgresDSN  string
+	redisAddr    string
+	kafkaBrokers []string
+	kafkaTopic   string
+	httpClient   = &http.Client{Timeout: 10 * time.Second}
 )
 
 func TestMain(m *testing.M) {
@@ -50,15 +55,33 @@ func run(m *testing.M) int {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	container, err := startPostgres(ctx)
+	// Приложение стартует с fail fast на Redis и Kafka, поэтому тест
+	// поднимает все три зависимости.
+	postgresContainer, err := startPostgres(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "postgres: %v\n", err)
 
 		return 1
 	}
-	defer terminatePostgres(container)
+	defer terminateContainer(postgresContainer)
 
-	cfg, err := appConfig(ctx, container)
+	redisContainer, err := startRedis(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "redis: %v\n", err)
+
+		return 1
+	}
+	defer terminateContainer(redisContainer)
+
+	kafkaContainer, err := startKafka(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "kafka: %v\n", err)
+
+		return 1
+	}
+	defer terminateContainer(kafkaContainer)
+
+	cfg, err := appConfig(ctx, postgresContainer, redisContainer, kafkaContainer)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "config: %v\n", err)
 
@@ -353,22 +376,61 @@ func startPostgres(ctx context.Context) (*postgres.PostgresContainer, error) {
 	return container, nil
 }
 
-func terminatePostgres(container *postgres.PostgresContainer) {
+func startRedis(ctx context.Context) (*redis.RedisContainer, error) {
+	container, err := redis.Run(ctx, "redis:7-alpine")
+	if err != nil {
+		return nil, fmt.Errorf("start redis: %w", err)
+	}
+
+	return container, nil
+}
+
+// startKafka поднимает одноброкерную ноду в KRaft-режиме — так же, как в docker-compose.
+func startKafka(ctx context.Context) (*kafka.KafkaContainer, error) {
+	container, err := kafka.Run(ctx,
+		"confluentinc/confluent-local:7.7.6",
+		kafka.WithClusterID("feed-fanout-test"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("start kafka: %w", err)
+	}
+
+	return container, nil
+}
+
+func terminateContainer(container testcontainers.Container) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := container.Terminate(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "terminate postgres: %v\n", err)
+		fmt.Fprintf(os.Stderr, "terminate container: %v\n", err)
 	}
 }
 
-func appConfig(ctx context.Context, container *postgres.PostgresContainer) (config.Config, error) {
-	host, err := container.Host(ctx)
+func appConfig(
+	ctx context.Context,
+	postgresContainer *postgres.PostgresContainer,
+	redisContainer *redis.RedisContainer,
+	kafkaContainer *kafka.KafkaContainer,
+) (config.Config, error) {
+	host, err := postgresContainer.Host(ctx)
 	if err != nil {
 		return config.Config{}, fmt.Errorf("postgres host: %w", err)
 	}
-	mappedPort, err := container.MappedPort(ctx, "5432/tcp")
+	mappedPort, err := postgresContainer.MappedPort(ctx, "5432/tcp")
 	if err != nil {
 		return config.Config{}, fmt.Errorf("postgres port: %w", err)
+	}
+	redisHost, err := redisContainer.Host(ctx)
+	if err != nil {
+		return config.Config{}, fmt.Errorf("redis host: %w", err)
+	}
+	redisPort, err := redisContainer.MappedPort(ctx, "6379/tcp")
+	if err != nil {
+		return config.Config{}, fmt.Errorf("redis port: %w", err)
+	}
+	brokers, err := kafkaContainer.Brokers(ctx)
+	if err != nil {
+		return config.Config{}, fmt.Errorf("kafka brokers: %w", err)
 	}
 	httpPort, err := freePort()
 	if err != nil {
@@ -384,14 +446,46 @@ func appConfig(ctx context.Context, container *postgres.PostgresContainer) (conf
 			MaxBodyBytes: 65536,
 		},
 		Postgres: config.PostgresConfig{
-			Host:            host,
-			Port:            mappedPort.Port(),
-			User:            dbUser,
-			Password:        dbPassword,
-			Database:        dbName,
+			Host:     host,
+			Port:     mappedPort.Port(),
+			User:     dbUser,
+			Password: dbPassword,
+			Database: dbName,
+			// Схема без затравочных данных: миграция занимает секунды вместо
+			// минут, а тесты создают данные сами через API.
+			MigrateSeed:     false,
 			MaxConns:        5,
 			MaxConnLifetime: time.Minute,
 			MaxConnIdleTime: time.Minute,
+		},
+		// Кэш ленты включён для сценариев шага 11. Маленькие cache_limit и
+		// warm_limit дают границу кэша без сотен постов, короткий TTL —
+		// проверку продления TTL на чтении.
+		Feed: config.FeedConfig{
+			Enabled:        true,
+			CacheLimit:     5,
+			WarmLimit:      5,
+			TTL:            time.Minute,
+			PostTTL:        72 * time.Hour,
+			EmptyMarkerTTL: time.Minute,
+		},
+		Redis: config.RedisConfig{
+			Addr:         net.JoinHostPort(redisHost, redisPort.Port()),
+			DialTimeout:  time.Second,
+			ReadTimeout:  time.Second,
+			WriteTimeout: time.Second,
+			PoolSize:     1,
+		},
+		Kafka: config.KafkaConfig{
+			Brokers:      strings.Join(brokers, ","),
+			Topic:        "post-events",
+			GroupID:      "feed-fanout-test",
+			BatchSize:    100,
+			BatchTimeout: time.Second,
+		},
+		Outbox: config.OutboxConfig{
+			PollInterval: time.Second,
+			BatchSize:    100,
 		},
 	}
 	if err := cfg.Validate(); err != nil {
@@ -400,12 +494,18 @@ func appConfig(ctx context.Context, container *postgres.PostgresContainer) (conf
 
 	postgresDSN = cfg.Postgres.DSN()
 	baseURL = "http://127.0.0.1:" + httpPort
+	redisAddr = cfg.Redis.Addr
+	kafkaBrokers = brokers
+	kafkaTopic = cfg.Kafka.Topic
 
 	return cfg, nil
 }
 
 func waitHTTP(url string) error {
-	deadline := time.Now().Add(30 * time.Second)
+	// Миграции с тестовыми данными (пользователи, посты, друзья) накатываются
+	// при старте приложения: 00004_posts_data.sql содержит ~1M строк и занимает
+	// больше шести минут, поэтому ждём с запасом.
+	deadline := time.Now().Add(12 * time.Minute)
 	probe := url + "/user/get/" + uuid.NewString()
 	client := &http.Client{Timeout: time.Second}
 	for time.Now().Before(deadline) {

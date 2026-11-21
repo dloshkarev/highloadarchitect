@@ -19,4 +19,3 @@ dist/
 **/*_test.go
 deployments/
 vendor/
-build/dev/postgres-init/

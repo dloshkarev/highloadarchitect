@@ -48,7 +48,13 @@ func classify(err error) (int, int) {
 	switch {
 	case isValidation(err):
 		return http.StatusBadRequest, 0
-	case errors.Is(err, domain.ErrNotFound), errors.Is(err, domain.ErrRouteNotFound):
+	case errors.Is(err, domain.ErrUnauthorized):
+		return http.StatusUnauthorized, 0
+	case errors.Is(err, domain.ErrForbidden):
+		return http.StatusForbidden, 0
+	case errors.Is(err, domain.ErrNotFound),
+		errors.Is(err, domain.ErrPostNotFound),
+		errors.Is(err, domain.ErrRouteNotFound):
 		return http.StatusNotFound, 0
 	default:
 		code := errorCodeInternal
@@ -74,8 +80,17 @@ func clientMessage(err error) string {
 	if errors.Is(err, domain.ErrNotFound) {
 		return domain.ErrNotFound.Error()
 	}
+	if errors.Is(err, domain.ErrPostNotFound) {
+		return domain.ErrPostNotFound.Error()
+	}
 	if errors.Is(err, domain.ErrRouteNotFound) {
 		return domain.ErrRouteNotFound.Error()
+	}
+	if errors.Is(err, domain.ErrUnauthorized) {
+		return domain.ErrUnauthorized.Error()
+	}
+	if errors.Is(err, domain.ErrForbidden) {
+		return domain.ErrForbidden.Error()
 	}
 
 	return err.Error()
