@@ -55,7 +55,9 @@ type Consumer struct {
 	done      chan struct{}
 }
 
-func NewConsumer(cfg config.KafkaConfig, processor BatchProcessor) (*Consumer, error) {
+// NewConsumer создаёт консьюмера и запускает внутренний цикл ConsumerGroup.
+// Цикл останавливается по ctx приложения или по Close.
+func NewConsumer(ctx context.Context, cfg config.KafkaConfig, processor BatchProcessor) (*Consumer, error) {
 	brokers, err := cfg.BrokersList()
 	if err != nil {
 		return nil, fmt.Errorf("parse kafka brokers: %w", err)
@@ -66,7 +68,7 @@ func NewConsumer(cfg config.KafkaConfig, processor BatchProcessor) (*Consumer, e
 		return nil, fmt.Errorf("create kafka consumer group: %w", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	loopCtx, cancel := context.WithCancel(ctx)
 
 	c := &Consumer{
 		group:     group,
@@ -77,7 +79,7 @@ func NewConsumer(cfg config.KafkaConfig, processor BatchProcessor) (*Consumer, e
 		cancel:    cancel,
 		done:      make(chan struct{}),
 	}
-	go c.consumeLoop(ctx)
+	go c.consumeLoop(loopCtx)
 
 	return c, nil
 }
