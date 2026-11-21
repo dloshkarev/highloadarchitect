@@ -39,9 +39,12 @@ const (
 )
 
 var (
-	baseURL     string
-	postgresDSN string
-	httpClient  = &http.Client{Timeout: 10 * time.Second}
+	baseURL      string
+	postgresDSN  string
+	redisAddr    string
+	kafkaBrokers []string
+	kafkaTopic   string
+	httpClient   = &http.Client{Timeout: 10 * time.Second}
 )
 
 func TestMain(m *testing.M) {
@@ -425,7 +428,6 @@ func appConfig(
 	if err != nil {
 		return config.Config{}, fmt.Errorf("redis port: %w", err)
 	}
-	redisAddr := net.JoinHostPort(redisHost, redisPort.Port())
 	brokers, err := kafkaContainer.Brokers(ctx)
 	if err != nil {
 		return config.Config{}, fmt.Errorf("kafka brokers: %w", err)
@@ -456,18 +458,19 @@ func appConfig(
 			MaxConnLifetime: time.Minute,
 			MaxConnIdleTime: time.Minute,
 		},
-		// Кэш ленты выключен: HTTP-тесты шага 9 не зависят от него,
-		// сценарии кэша добавляются на шаге 11.
+		// Кэш ленты включён для сценариев шага 11. Маленькие cache_limit и
+		// warm_limit дают границу кэша без сотен постов, короткий TTL —
+		// проверку продления TTL на чтении.
 		Feed: config.FeedConfig{
-			Enabled:        false,
-			CacheLimit:     1000,
-			WarmLimit:      1000,
-			TTL:            24 * time.Hour,
+			Enabled:        true,
+			CacheLimit:     5,
+			WarmLimit:      5,
+			TTL:            time.Minute,
 			PostTTL:        72 * time.Hour,
-			EmptyMarkerTTL: 24 * time.Hour,
+			EmptyMarkerTTL: time.Minute,
 		},
 		Redis: config.RedisConfig{
-			Addr:         redisAddr,
+			Addr:         net.JoinHostPort(redisHost, redisPort.Port()),
 			DialTimeout:  time.Second,
 			ReadTimeout:  time.Second,
 			WriteTimeout: time.Second,
@@ -491,6 +494,9 @@ func appConfig(
 
 	postgresDSN = cfg.Postgres.DSN()
 	baseURL = "http://127.0.0.1:" + httpPort
+	redisAddr = cfg.Redis.Addr
+	kafkaBrokers = brokers
+	kafkaTopic = cfg.Kafka.Topic
 
 	return cfg, nil
 }
