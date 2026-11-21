@@ -37,3 +37,8 @@ type PostRepository interface {
 	) error
 	DeleteWithOutbox(ctx context.Context, postID string, authorID string, event domain.OutboxEvent) error
 }
+
+type OutboxRepository interface {
+	GetBatch(ctx context.Context, limit int) ([]domain.OutboxEvent, error)
+	Delete(ctx context.Context, id int64) error
+}
