@@ -11,6 +11,9 @@ postgres:
   port: "5432"
   user: "social"
   database: "social"
+  # Затравочные миграции (*_data.sql) наполняют таблицы тестовыми данными:
+  # нужны при полном запуске приложения, интеграционные тесты их пропускают.
+  migrate_seed: true
   read_hosts: "" # адреса реплик через запятую, например "localhost:5434,localhost:5435"; пусто — чтение с мастера
   max_conns: 10
   max_conn_lifetime: "30m"

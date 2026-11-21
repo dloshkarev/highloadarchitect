@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -40,11 +41,23 @@ func NewPool(ctx context.Context, postgresConfig config.PostgresConfig) (*pgxpoo
 	return pool, nil
 }
 
-func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
+// Migrate применяет миграции из embed. При seed=false пропускаются затравочные
+// миграции (*_data.sql): таблицы создаются пустыми. Полный запуск приложения
+// мигрирует всё, интеграционные тесты стартуют со схемой без данных.
+func Migrate(ctx context.Context, pool *pgxpool.Pool, seed bool) error {
 	sqlDB := stdlib.OpenDBFromPool(pool)
 	defer sqlDB.Close()
 
-	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, migrations.FS)
+	source := fs.FS(migrations.FS)
+	if !seed {
+		schemaOnly, err := migrations.SchemaOnly()
+		if err != nil {
+			return fmt.Errorf("schema migrations: %w", err)
+		}
+		source = schemaOnly
+	}
+
+	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, source)
 	if err != nil {
 		return fmt.Errorf("goose provider: %w", err)
 	}

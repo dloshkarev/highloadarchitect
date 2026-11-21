@@ -444,11 +444,14 @@ func appConfig(
 			MaxBodyBytes: 65536,
 		},
 		Postgres: config.PostgresConfig{
-			Host:            host,
-			Port:            mappedPort.Port(),
-			User:            dbUser,
-			Password:        dbPassword,
-			Database:        dbName,
+			Host:     host,
+			Port:     mappedPort.Port(),
+			User:     dbUser,
+			Password: dbPassword,
+			Database: dbName,
+			// Схема без затравочных данных: миграция занимает секунды вместо
+			// минут, а тесты создают данные сами через API.
+			MigrateSeed:     false,
 			MaxConns:        5,
 			MaxConnLifetime: time.Minute,
 			MaxConnIdleTime: time.Minute,

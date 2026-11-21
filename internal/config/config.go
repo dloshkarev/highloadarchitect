@@ -69,11 +69,15 @@ type HTTPServerConfig struct {
 }
 
 type PostgresConfig struct {
-	Host            string        `yaml:"host" env:"POSTGRES_HOST" env-required:"true"`
-	Port            string        `yaml:"port" env:"POSTGRES_PORT" env-required:"true"`
-	User            string        `yaml:"user" env:"POSTGRES_USER" env-required:"true"`
-	Password        string        `yaml:"password" env:"POSTGRES_PASSWORD" env-required:"true"`
-	Database        string        `yaml:"database" env:"POSTGRES_DB" env-required:"true"`
+	Host     string `yaml:"host" env:"POSTGRES_HOST" env-required:"true"`
+	Port     string `yaml:"port" env:"POSTGRES_PORT" env-required:"true"`
+	User     string `yaml:"user" env:"POSTGRES_USER" env-required:"true"`
+	Password string `yaml:"password" env:"POSTGRES_PASSWORD" env-required:"true"`
+	Database string `yaml:"database" env:"POSTGRES_DB" env-required:"true"`
+	// MigrateSeed управляет затравочными миграциями (*_data.sql), наполняющими
+	// таблицы тестовыми данными. Включена для полного запуска приложения,
+	// интеграционные тесты стартуют со схемой без данных.
+	MigrateSeed     bool          `yaml:"migrate_seed" env:"POSTGRES_MIGRATE_SEED"`
 	ReadHosts       string        `yaml:"read_hosts" env:"POSTGRES_READ_HOSTS"`
 	MaxConns        int32         `yaml:"max_conns" env:"POSTGRES_MAX_CONNS" env-required:"true"`
 	MaxConnLifetime time.Duration `yaml:"max_conn_lifetime" env:"POSTGRES_MAX_CONN_LIFETIME" env-required:"true"`

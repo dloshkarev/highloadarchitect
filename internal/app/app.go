@@ -28,7 +28,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 	}
 	defer writePool.Close()
 
-	if err := postgres.Migrate(ctx, writePool); err != nil {
+	if err := postgres.Migrate(ctx, writePool, cfg.Postgres.MigrateSeed); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
 
