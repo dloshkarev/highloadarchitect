@@ -1001937,4 +1001937,4 @@ ALTER TABLE users ALTER COLUMN password_hash DROP DEFAULT;
 -- +goose Down
 DELETE FROM users;
 ALTER TABLE users ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE users ALTER COLUMN password_hash SET DEFAULT '$2a$10$wPU0QusFYid9TqTV5jK21uwTOFHOc5iEvdUz7BGmZh6/Txl9aXsaq';
+ALTER TABLE users ALTER COLUMN password_hash SET DEFAULT '$2a$10$W0HrXoeOxu7ocolAw6hvqOD/0Xy/3ztFrSmQx8AEUCEWdtqGctP0C';
