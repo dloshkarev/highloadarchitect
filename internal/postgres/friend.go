@@ -63,6 +63,40 @@ func (r *FriendRepository) Delete(ctx context.Context, userID string, friendID s
 	})
 }
 
+// Followers возвращает по одному списку друзей на каждого автора из authorIDs:
+// map[authorID][]userID — пользователи, у которых автор в друзьях.
+// Авторы без друзей отсутствуют в результате. Один запрос на весь батч.
+func (r *FriendRepository) Followers(ctx context.Context, authorIDs []string) (map[string][]string, error) {
+	if len(authorIDs) == 0 {
+		return map[string][]string{}, nil
+	}
+
+	const query = `
+		SELECT friend_id, user_id
+		FROM friends
+		WHERE friend_id = ANY($1::uuid[])
+	`
+	rows, err := r.pool.Query(ctx, query, authorIDs)
+	if err != nil {
+		return nil, dbErr("select followers", err)
+	}
+	defer rows.Close()
+
+	followers := make(map[string][]string, len(authorIDs))
+	for rows.Next() {
+		var authorID, userID string
+		if err := rows.Scan(&authorID, &userID); err != nil {
+			return nil, dbErr("scan follower", err)
+		}
+		followers[authorID] = append(followers[authorID], userID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, dbErr("iterate followers", err)
+	}
+
+	return followers, nil
+}
+
 // isForeignKeyViolation — SQLSTATE 23503 (foreign_key_violation).
 func isForeignKeyViolation(err error) bool {
 	var pgErr *pgconn.PgError

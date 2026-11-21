@@ -21,6 +21,7 @@ type SessionRepository interface {
 type FriendRepository interface {
 	Add(ctx context.Context, userID string, friendID string) error
 	Delete(ctx context.Context, userID string, friendID string) error
+	Followers(ctx context.Context, authorIDs []string) (map[string][]string, error)
 }
 
 type PostRepository interface {
