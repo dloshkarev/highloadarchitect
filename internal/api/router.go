@@ -2,6 +2,7 @@ package api
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/dloshkarev/highloadarchitect/internal/domain"
 	"github.com/dloshkarev/highloadarchitect/internal/service"
@@ -28,6 +29,9 @@ func NewRouter(
 
 	// SEARCH
 	router.GET("/user/search", userHandler.search)
+
+	// METRICS
+	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	// Дальше все ручки работают от имени текущего пользователя.
 	authorized := router.Group("", authRequired(auth))

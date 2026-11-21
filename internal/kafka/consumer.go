@@ -122,6 +122,8 @@ func (c *Consumer) Run(ctx context.Context) {
 
 			return
 		}
+
+		slog.Debug("kafka batch processed", "messages", len(envelopes), "posts", len(posts))
 	}
 }
 

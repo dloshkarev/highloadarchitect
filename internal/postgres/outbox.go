@@ -59,3 +59,16 @@ func (r *OutboxRepository) Delete(ctx context.Context, id int64) error {
 		return nil
 	})
 }
+
+// Count возвращает число необработанных событий: показывает отставание
+// воркера, когда события копятся быстрее обработки.
+func (r *OutboxRepository) Count(ctx context.Context) (int64, error) {
+	const query = `SELECT count(*) FROM outbox`
+
+	var count int64
+	if err := r.pool.QueryRow(ctx, query).Scan(&count); err != nil {
+		return 0, dbErr("count outbox events", err)
+	}
+
+	return count, nil
+}

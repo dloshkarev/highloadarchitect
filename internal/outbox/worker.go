@@ -13,6 +13,7 @@ import (
 
 	"github.com/dloshkarev/highloadarchitect/internal/config"
 	"github.com/dloshkarev/highloadarchitect/internal/domain"
+	"github.com/dloshkarev/highloadarchitect/internal/metrics"
 	"github.com/dloshkarev/highloadarchitect/internal/repository"
 )
 
@@ -88,6 +89,7 @@ func (w *Worker) process(ctx context.Context) {
 
 		return
 	}
+	metrics.OutboxBatchSize.Observe(float64(len(events)))
 
 	for _, event := range events {
 		if ctx.Err() != nil {
@@ -106,6 +108,14 @@ func (w *Worker) process(ctx context.Context) {
 			slog.Error("outbox event delete failed", "event_id", event.ID, "err", deleteErr)
 		}
 	}
+
+	remaining, err := w.repo.Count(ctx)
+	if err != nil {
+		slog.Error("outbox lag count failed", "err", err)
+
+		return
+	}
+	metrics.OutboxLag.Set(float64(remaining))
 }
 
 func (w *Worker) handle(ctx context.Context, event domain.OutboxEvent) error {

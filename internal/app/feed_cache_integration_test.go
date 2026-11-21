@@ -279,6 +279,21 @@ func publishPostMessage(t *testing.T, post domain.PublishedPost) {
 	require.NoError(t, err)
 }
 
+// TestMetricsEndpoint проверяет экспорт метрик Prometheus.
+// Ожидает 200 на /metrics и наличие счётчиков кэша ленты среди метрик.
+func TestMetricsEndpoint(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	status, body := doJSON(t, http.MethodGet, "/metrics", nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Contains(t, string(body), "feed_cache_hit_total")
+	require.Contains(t, string(body), "feed_cache_miss_total")
+	require.Contains(t, string(body), "outbox_lag")
+	require.Contains(t, string(body), "fanout_recipients_total")
+}
+
 // TestCreatePostWritesPostAndOutbox проверяет, что создание поста через API
 // пишет posts и outbox в одной транзакции.
 // Ожидает строку в posts с текстом поста и событие new_post в outbox с этим post_id.

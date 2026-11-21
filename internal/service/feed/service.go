@@ -10,6 +10,7 @@ import (
 
 	"github.com/dloshkarev/highloadarchitect/internal/config"
 	"github.com/dloshkarev/highloadarchitect/internal/domain"
+	"github.com/dloshkarev/highloadarchitect/internal/metrics"
 	rediscache "github.com/dloshkarev/highloadarchitect/internal/redis"
 )
 
@@ -46,36 +47,29 @@ func (s *Service) Feed(ctx context.Context, userID string, offset int, limit int
 
 	card, err := s.cache.Card(ctx, userID)
 	if err != nil {
+		metrics.FeedCacheMisses.Inc()
 		s.logCacheError("read feed card", userID, err)
 
 		return s.loadFromDB(ctx, userID, offset, limit)
 	}
 
 	if card == 0 {
-		warmed, err := s.posts.Feed(ctx, userID, 0, s.cfg.WarmLimit)
+		var empty bool
+		card, empty, err = s.warmFeed(ctx, userID)
 		if err != nil {
-			return nil, fmt.Errorf("warm feed: %w", err)
+			return nil, err
 		}
-		if len(warmed) == 0 {
+		if empty {
+			metrics.FeedCacheMisses.Inc()
+
 			return []domain.Post{}, nil
-		}
-		if err := s.cache.Warm(ctx, userID, warmed); err != nil {
-			s.logCacheError("warm feed", userID, err)
-
-			return s.loadFromDB(ctx, userID, offset, limit)
-		}
-
-		card, err = s.cache.Card(ctx, userID)
-		if err != nil {
-			s.logCacheError("read warmed feed card", userID, err)
-
-			return s.loadFromDB(ctx, userID, offset, limit)
 		}
 	}
 
 	if card > 0 && int64(offset) <= card-int64(limit) {
 		ids, err := s.cache.Range(ctx, userID, offset, limit)
 		if err != nil {
+			metrics.FeedCacheMisses.Inc()
 			s.logCacheError("read feed range", userID, err)
 
 			return s.loadFromDBAndTouch(ctx, userID, offset, limit)
@@ -83,17 +77,56 @@ func (s *Service) Feed(ctx context.Context, userID string, offset int, limit int
 
 		posts, err := s.loadPosts(ctx, ids)
 		if err != nil {
+			metrics.FeedCacheMisses.Inc()
 			s.logCacheError("load feed posts", userID, err)
 
 			return s.loadFromDBAndTouch(ctx, userID, offset, limit)
 		}
 
+		metrics.FeedCacheHits.Inc()
 		s.touch(ctx, userID)
 
 		return posts, nil
 	}
 
+	metrics.FeedCacheMisses.Inc()
+
 	return s.loadFromDBAndTouch(ctx, userID, offset, limit)
+}
+
+// warmFeed прогревает кэш ленты из БД, когда в Redis пусто, и возвращает
+// свежее число постов и признак «в БД у пользователя нет постов».
+// Пустая лента не создаёт ключ: Redis не хранит пустые sorted set,
+// прогрев повторится на следующем чтении.
+func (s *Service) warmFeed(ctx context.Context, userID string) (int64, bool, error) {
+	started := time.Now()
+
+	warmed, err := s.posts.Feed(ctx, userID, 0, s.cfg.WarmLimit)
+	if err != nil {
+		return 0, false, fmt.Errorf("warm feed: %w", err)
+	}
+
+	metrics.FeedWarmTotal.Inc()
+	metrics.FeedWarmDuration.Observe(time.Since(started).Seconds())
+
+	if len(warmed) == 0 {
+		return 0, true, nil
+	}
+
+	if err := s.cache.Warm(ctx, userID, warmed); err != nil {
+		s.logCacheError("warm feed", userID, err)
+
+		return 0, false, nil
+	}
+
+	card, err := s.cache.Card(ctx, userID)
+	if err != nil {
+		s.logCacheError("read warmed feed card", userID, err)
+
+		return 0, false, nil
+	}
+
+	return card, false, nil
 }
 
 // loadPosts собирает тела постов по идентификаторам из кэша ленты.

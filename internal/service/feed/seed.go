@@ -3,8 +3,10 @@ package feed
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/dloshkarev/highloadarchitect/internal/domain"
+	"github.com/dloshkarev/highloadarchitect/internal/metrics"
 	rediscache "github.com/dloshkarev/highloadarchitect/internal/redis"
 )
 
@@ -39,6 +41,8 @@ func (s *Seeder) Seed(ctx context.Context, posts []domain.PublishedPost) error {
 		return nil
 	}
 
+	started := time.Now()
+
 	authorIDs := distinctAuthors(posts)
 	friendsByAuthor, err := s.friends.Followers(ctx, authorIDs)
 	if err != nil {
@@ -60,6 +64,9 @@ func (s *Seeder) Seed(ctx context.Context, posts []domain.PublishedPost) error {
 			return fmt.Errorf("fanout feed %s: %w", recipient, err)
 		}
 	}
+
+	metrics.FanoutRecipients.Add(float64(len(byRecipient)))
+	metrics.FanoutDuration.Observe(time.Since(started).Seconds())
 
 	return nil
 }

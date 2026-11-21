@@ -34,9 +34,19 @@ type fakeOutboxRepository struct {
 	events    []domain.OutboxEvent
 	getErr    error
 	deleteErr error
+	countErr  error
+	remaining int64
 	getCalls  int
 	limit     int
 	deleted   []int64
+}
+
+func (f *fakeOutboxRepository) Count(_ context.Context) (int64, error) {
+	if f.countErr != nil {
+		return 0, f.countErr
+	}
+
+	return f.remaining, nil
 }
 
 func (f *fakeOutboxRepository) GetBatch(_ context.Context, limit int) ([]domain.OutboxEvent, error) {
