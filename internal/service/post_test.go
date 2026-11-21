@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -30,9 +31,27 @@ func (f *fakeFeedService) Feed(_ context.Context, userID string, offset int, lim
 type fakePostRepository struct {
 	feedPosts []domain.Post
 	feedCalls []feedCall
+
+	createErr error
+	updateErr error
+	deleteErr error
+
+	createdPost domain.Post
+	updatedBy   string
+	updatedID   string
+	updatedText string
+	deletedBy   string
+	deletedID   string
+	events      []domain.OutboxEvent
 }
 
-func (f *fakePostRepository) Create(_ context.Context, _ domain.Post) error {
+func (f *fakePostRepository) CreateWithOutbox(_ context.Context, post domain.Post, event domain.OutboxEvent) error {
+	if f.createErr != nil {
+		return f.createErr
+	}
+	f.createdPost = post
+	f.events = append(f.events, event)
+
 	return nil
 }
 
@@ -50,11 +69,37 @@ func (f *fakePostRepository) Feed(_ context.Context, userID string, offset int, 
 	return f.feedPosts, nil
 }
 
-func (f *fakePostRepository) UpdateText(_ context.Context, _ string, _ string, _ string) error {
+func (f *fakePostRepository) UpdateTextWithOutbox(
+	_ context.Context,
+	postID string,
+	authorID string,
+	text string,
+	event domain.OutboxEvent,
+) error {
+	if f.updateErr != nil {
+		return f.updateErr
+	}
+	f.updatedID = postID
+	f.updatedBy = authorID
+	f.updatedText = text
+	f.events = append(f.events, event)
+
 	return nil
 }
 
-func (f *fakePostRepository) Delete(_ context.Context, _ string, _ string) error {
+func (f *fakePostRepository) DeleteWithOutbox(
+	_ context.Context,
+	postID string,
+	authorID string,
+	event domain.OutboxEvent,
+) error {
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
+	f.deletedID = postID
+	f.deletedBy = authorID
+	f.events = append(f.events, event)
+
 	return nil
 }
 
@@ -112,6 +157,140 @@ func TestPostServiceFeedWithoutFeedService(t *testing.T) {
 	if call := repository.feedCalls[0]; call.offset != 2 || call.limit != 3 {
 		t.Fatalf("repository call = %+v, want offset=2 limit=3", call)
 	}
+}
+
+func TestPostServiceCreateWritesNewPostOutbox(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	authorID := uuid.NewString()
+	repository := &fakePostRepository{}
+	service := NewPostService(repository, nil)
+
+	postID, err := service.Create(ctx, authorID, "  hello world  ")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, parseErr := uuid.Parse(postID); parseErr != nil {
+		t.Fatalf("Create() returned invalid id %q: %v", postID, parseErr)
+	}
+	if repository.createdPost.ID != postID || repository.createdPost.AuthorID != authorID {
+		t.Fatalf("created post = %+v, want id=%s author=%s", repository.createdPost, postID, authorID)
+	}
+	if repository.createdPost.Text != "hello world" {
+		t.Fatalf("created text = %q, want %q", repository.createdPost.Text, "hello world")
+	}
+
+	event := onlyEvent(t, repository)
+	if event.Type != domain.OutboxEventNewPost {
+		t.Fatalf("event type = %q, want %q", event.Type, domain.OutboxEventNewPost)
+	}
+
+	var payload domain.NewPostPayload
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if payload.PostID != postID || payload.AuthorID != authorID || payload.Body != "hello world" {
+		t.Fatalf("payload = %+v", payload)
+	}
+	wantCreatedAt := repository.createdPost.CreatedAt.UnixMicro()
+	if payload.CreatedAtUnixMicro != wantCreatedAt {
+		t.Fatalf("created_at_unix_micro = %d, want %d", payload.CreatedAtUnixMicro, wantCreatedAt)
+	}
+}
+
+func TestPostServiceUpdateWritesEditPostOutbox(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	userID := uuid.NewString()
+	postID := uuid.NewString()
+	repository := &fakePostRepository{}
+	service := NewPostService(repository, nil)
+
+	if err := service.Update(ctx, userID, postID, "  new text  "); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	if repository.updatedID != postID || repository.updatedBy != userID {
+		t.Fatalf("updated id/author = %q/%q, want %q/%q", repository.updatedID, repository.updatedBy, postID, userID)
+	}
+	if repository.updatedText != "new text" {
+		t.Fatalf("updated text = %q, want %q", repository.updatedText, "new text")
+	}
+
+	event := onlyEvent(t, repository)
+	if event.Type != domain.OutboxEventEditPost {
+		t.Fatalf("event type = %q, want %q", event.Type, domain.OutboxEventEditPost)
+	}
+
+	var payload domain.EditPostPayload
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if payload.PostID != postID || payload.AuthorID != userID || payload.Body != "new text" {
+		t.Fatalf("payload = %+v", payload)
+	}
+}
+
+func TestPostServiceDeleteWritesDeletePostOutbox(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	userID := uuid.NewString()
+	postID := uuid.NewString()
+	repository := &fakePostRepository{}
+	service := NewPostService(repository, nil)
+
+	if err := service.Delete(ctx, userID, postID); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if repository.deletedID != postID || repository.deletedBy != userID {
+		t.Fatalf("deleted id/author = %q/%q, want %q/%q", repository.deletedID, repository.deletedBy, postID, userID)
+	}
+
+	event := onlyEvent(t, repository)
+	if event.Type != domain.OutboxEventDeletePost {
+		t.Fatalf("event type = %q, want %q", event.Type, domain.OutboxEventDeletePost)
+	}
+
+	var payload domain.DeletePostPayload
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if payload.PostID != postID || payload.AuthorID != userID {
+		t.Fatalf("payload = %+v", payload)
+	}
+}
+
+func TestPostServiceWriteValidationSkipsRepository(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	repository := &fakePostRepository{}
+	service := NewPostService(repository, nil)
+
+	if _, err := service.Create(ctx, uuid.NewString(), "   "); err == nil {
+		t.Fatal("Create() error = nil, want validation error")
+	}
+	if err := service.Update(ctx, uuid.NewString(), "bad", "text"); err == nil {
+		t.Fatal("Update() error = nil, want validation error")
+	}
+	if err := service.Delete(ctx, uuid.NewString(), "bad"); err == nil {
+		t.Fatal("Delete() error = nil, want validation error")
+	}
+	if len(repository.events) != 0 {
+		t.Fatalf("outbox events = %d, want 0", len(repository.events))
+	}
+}
+
+func onlyEvent(t *testing.T, repository *fakePostRepository) domain.OutboxEvent {
+	t.Helper()
+
+	if len(repository.events) != 1 {
+		t.Fatalf("outbox events = %d, want 1", len(repository.events))
+	}
+
+	return repository.events[0]
 }
 
 func TestPostServiceFeedValidation(t *testing.T) {

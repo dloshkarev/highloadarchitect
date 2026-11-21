@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/dloshkarev/highloadarchitect/internal/domain"
@@ -20,19 +19,28 @@ func NewPostRepository(pool *pgxpool.Pool) *PostRepository {
 	return &PostRepository{pool: pool}
 }
 
-func (r *PostRepository) Create(ctx context.Context, post domain.Post) error {
+// CreateWithOutbox вставляет пост и событие new_post в одной транзакции.
+// ON CONFLICT DO NOTHING делает повтор транзакции безопасным: пост с тем же
+// id не будет вставлен дважды, а дубль outbox-события допустим.
+func (r *PostRepository) CreateWithOutbox(
+	ctx context.Context,
+	post domain.Post,
+	event domain.OutboxEvent,
+) error {
 	const query = `
 		INSERT INTO posts (id, author_id, body, created_at)
 		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (id) DO NOTHING
 	`
 
-	return executeWrite(ctx, "insert post", func() error {
-		_, execErr := r.pool.Exec(ctx, query, post.ID, post.AuthorID, post.Text, post.CreatedAt)
-		if execErr != nil {
-			return fmt.Errorf("exec query: %w", execErr)
-		}
+	return executeWrite(ctx, "insert post with outbox", func() error {
+		return pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
+			if _, execErr := tx.Exec(ctx, query, post.ID, post.AuthorID, post.Text, post.CreatedAt); execErr != nil {
+				return fmt.Errorf("insert post: %w", execErr)
+			}
 
-		return nil
+			return insertOutbox(ctx, tx, event)
+		})
 	})
 }
 
@@ -126,59 +134,103 @@ func (r *PostRepository) Feed(ctx context.Context, userID string, offset int, li
 	return posts, nil
 }
 
-// UpdateText обновляет текст, только если пост принадлежит authorID.
+// UpdateTextWithOutbox обновляет текст и вставляет событие edit_post в одной
+// транзакции. Событие пишется только если пост действительно обновлён.
 // Если запрос не затронул строк, уточняем причину: пост не найден или чужой.
-func (r *PostRepository) UpdateText(ctx context.Context, postID string, authorID string, text string) error {
+func (r *PostRepository) UpdateTextWithOutbox(
+	ctx context.Context,
+	postID string,
+	authorID string,
+	text string,
+	event domain.OutboxEvent,
+) error {
 	const query = `
 		UPDATE posts
 		SET body = $3
 		WHERE id = $1 AND author_id = $2
 	`
-	var tag pgconn.CommandTag
-	err := executeWrite(ctx, "update post", func() error {
-		var execErr error
-		tag, execErr = r.pool.Exec(ctx, query, postID, authorID, text)
-		if execErr != nil {
-			return fmt.Errorf("exec query: %w", execErr)
-		}
 
-		return nil
+	var affected int64
+	err := executeWrite(ctx, "update post with outbox", func() error {
+		return pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
+			tag, execErr := tx.Exec(ctx, query, postID, authorID, text)
+			if execErr != nil {
+				return fmt.Errorf("update post: %w", execErr)
+			}
+
+			affected = tag.RowsAffected()
+			if affected == 0 {
+				return nil
+			}
+
+			return insertOutbox(ctx, tx, event)
+		})
 	})
+
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() > 0 {
+
+	if affected > 0 {
 		return nil
 	}
 
 	return r.classifyMiss(ctx, postID, authorID)
 }
 
-// Delete удаляет пост, только если он принадлежит authorID.
+// DeleteWithOutbox удаляет пост и вставляет событие delete_post в одной
+// транзакции. Событие пишется только если пост действительно удалён.
 // Если запрос не затронул строк, уточняем причину: пост не найден или чужой.
-func (r *PostRepository) Delete(ctx context.Context, postID string, authorID string) error {
+func (r *PostRepository) DeleteWithOutbox(
+	ctx context.Context,
+	postID string,
+	authorID string,
+	event domain.OutboxEvent,
+) error {
 	const query = `
 		DELETE FROM posts
 		WHERE id = $1 AND author_id = $2
 	`
-	var tag pgconn.CommandTag
-	err := executeWrite(ctx, "delete post", func() error {
-		var execErr error
-		tag, execErr = r.pool.Exec(ctx, query, postID, authorID)
-		if execErr != nil {
-			return fmt.Errorf("exec query: %w", execErr)
-		}
 
-		return nil
+	var affected int64
+	err := executeWrite(ctx, "delete post with outbox", func() error {
+		return pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
+			tag, execErr := tx.Exec(ctx, query, postID, authorID)
+			if execErr != nil {
+				return fmt.Errorf("delete post: %w", execErr)
+			}
+
+			affected = tag.RowsAffected()
+			if affected == 0 {
+				return nil
+			}
+
+			return insertOutbox(ctx, tx, event)
+		})
 	})
+
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() > 0 {
+
+	if affected > 0 {
 		return nil
 	}
 
 	return r.classifyMiss(ctx, postID, authorID)
+}
+
+// insertOutbox вставляет событие в outbox в рамках переданной транзакции.
+func insertOutbox(ctx context.Context, tx pgx.Tx, event domain.OutboxEvent) error {
+	const query = `
+		INSERT INTO outbox (event_type, payload)
+		VALUES ($1, $2)
+	`
+	if _, err := tx.Exec(ctx, query, event.Type, event.Payload); err != nil {
+		return fmt.Errorf("insert outbox event: %w", err)
+	}
+
+	return nil
 }
 
 // classifyMiss вызывается, когда условный UPDATE/DELETE не затронул строк:

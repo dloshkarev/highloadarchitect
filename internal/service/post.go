@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -46,7 +47,16 @@ func (s *PostService) Create(ctx context.Context, authorID string, text string) 
 		Text:      normalized,
 		CreatedAt: time.Now().UTC(),
 	}
-	if err := s.posts.Create(ctx, post); err != nil {
+	event, err := newOutboxEvent(domain.OutboxEventNewPost, domain.NewPostPayload{
+		PostID:             post.ID,
+		AuthorID:           post.AuthorID,
+		Body:               post.Text,
+		CreatedAtUnixMicro: post.CreatedAt.UnixMicro(),
+	})
+	if err != nil {
+		return "", err
+	}
+	if err := s.posts.CreateWithOutbox(ctx, post, event); err != nil {
 		return "", fmt.Errorf("create post: %w", err)
 	}
 
@@ -61,7 +71,18 @@ func (s *PostService) Update(ctx context.Context, userID string, postID string, 
 	if err := validatePostID(postID); err != nil {
 		return err
 	}
-	if err := s.posts.UpdateText(ctx, postID, userID, normalized); err != nil {
+
+	event, err := newOutboxEvent(domain.OutboxEventEditPost, domain.EditPostPayload{
+		PostID:   postID,
+		AuthorID: userID,
+		Body:     normalized,
+	})
+
+	if err != nil {
+		return err
+	}
+
+	if err := s.posts.UpdateTextWithOutbox(ctx, postID, userID, normalized, event); err != nil {
 		return fmt.Errorf("update post: %w", err)
 	}
 
@@ -72,7 +93,17 @@ func (s *PostService) Delete(ctx context.Context, userID string, postID string) 
 	if err := validatePostID(postID); err != nil {
 		return err
 	}
-	if err := s.posts.Delete(ctx, postID, userID); err != nil {
+
+	event, err := newOutboxEvent(domain.OutboxEventDeletePost, domain.DeletePostPayload{
+		PostID:   postID,
+		AuthorID: userID,
+	})
+
+	if err != nil {
+		return err
+	}
+
+	if err := s.posts.DeleteWithOutbox(ctx, postID, userID, event); err != nil {
 		return fmt.Errorf("delete post: %w", err)
 	}
 
@@ -152,4 +183,14 @@ func validatePostID(postID string) error {
 	}
 
 	return nil
+}
+
+// newOutboxEvent сериализует payload и собирает событие transactional outbox.
+func newOutboxEvent(eventType string, payload any) (domain.OutboxEvent, error) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return domain.OutboxEvent{}, fmt.Errorf("marshal outbox payload: %w", err)
+	}
+
+	return domain.OutboxEvent{Type: eventType, Payload: data}, nil
 }
